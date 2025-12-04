@@ -1,159 +1,209 @@
-没问题。要修复第一版（多文件架构）的问题，核心在于**“明确文件结构”和“显式导入”**。之前之所以空白，是因为主程序 app.py 没能成功找到并加载 commands 文件夹里的类。
-这次我们不再用复杂的动态扫描，而是采用最稳健的**“显式引用”**方式。
-请按照以下 4 个步骤，严格创建文件和文件夹。
-第一步：建立目录结构
-请先新建一个文件夹（例如叫 ops_tool），然后在里面创建如下结构：
-ops_tool/                <-- 项目根目录
-├── app.py               <-- 主程序
-└── commands/            <-- 存放具体命令的包 (注意要有 s)
-    ├── __init__.py      <-- 必须有这个文件 (内容可以为空)
-    ├── base.py          <-- 存放基类
-    └── linux_ops.py     <-- 存放 Linux 相关的命令
-
-第二步：创建核心文件
-请依次复制以下代码到对应的文件中。
-1. commands/__init__.py
- * 内容：空文件即可。
- * 作用：告诉 Python 这个文件夹是一个“包”，允许被 import。
-2. commands/base.py (基类)
-定义所有命令必须遵守的规则。
-# 文件位置: commands/base.py
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any
-
-class CommandStrategy(ABC):
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        pass
-
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        pass
-
-    @abstractmethod
-    def get_params_schema(self) -> List[Dict[str, Any]]:
-        pass
-
-    @abstractmethod
-    def generate(self, params: Dict[str, Any]) -> str:
-        pass
-
-3. commands/linux_ops.py (具体实现)
-这是具体的 Linux 命令逻辑。注意这里使用了 from .base (相对导入)。
-# 文件位置: commands/linux_ops.py
-from .base import CommandStrategy
+import streamlit as st
+import json
+import os
+import pandas as pd
 from jinja2 import Template
 import shlex
 
-class FindLargeFilesCommand(CommandStrategy):
-    name = "Linux: 查找大文件"
-    description = "在指定目录下查找超过特定大小的文件。"
+# ==========================================
+# 核心逻辑：数据存储管理 (JSON 版)
+# ==========================================
+DB_FILE = "commands.json"
 
-    def get_params_schema(self):
-        return [
-            {"name": "path", "label": "搜索路径", "type": "text", "default": "/var/log"},
-            {"name": "size_mb", "label": "最小体积(MB)", "type": "number", "default": 100},
-            {"name": "action", "label": "执行动作", "type": "select", "options": ["只显示", "删除", "详情"]}
-        ]
-
-    def generate(self, params):
-        template_str = """
-        find {{ path }} -type f -size +{{ size }}M
-        {%- if action == '删除' %} -delete
-        {%- elif action == '详情' %} -exec ls -lh {} +
-        {%- else %} -print
-        {%- endif -%}
-        """
-        # 安全处理
-        safe_path = shlex.quote(params.get("path", "."))
-        
-        t = Template(template_str)
-        return t.render(
-            path=safe_path,
-            size=params.get("size_mb"),
-            action=params.get("action")
-        ).strip().replace('\n', ' ')
-
-第三步：创建主程序 app.py
-这是修复的关键。我们使用显式导入 (from commands.linux_ops import ...)，确保程序一定能找到那个类。
-# 文件位置: app.py
-import streamlit as st
-from typing import Dict
-
-# === 关键修复：显式导入你的命令类 ===
-# 只要这里不报错，下拉菜单就一定会有东西
-from commands.linux_ops import FindLargeFilesCommand
-
-# 如果你以后加了 sql_ops.py，就在这里加一行:
-# from commands.sql_ops import MySQLDumpCommand
-
-def main():
-    st.set_page_config(page_title="Ops Generator", layout="wide")
-    st.title("🛠️ 运维命令生成器 (多文件版)")
-
-    # 1. 注册命令
-    # 把导入的类实例化，放进列表
-    commands_list = [
-        FindLargeFilesCommand(),
-        # MySQLDumpCommand(), 
-    ]
+def load_templates():
+    """读取 JSON 文件，如果不存在则返回默认演示数据"""
+    if not os.path.exists(DB_FILE):
+        # 默认演示数据
+        default_data = {
+            "Linux: 查找大文件": {
+                "desc": "查找指定目录下的大文件",
+                "template": "find {{ path }} -type f -size +{{ size }}M {% if action == '删除' %} -delete {% endif %}",
+                "params": [
+                    {"name": "path", "label": "路径", "type": "text", "default": "/var/log", "options": ""},
+                    {"name": "size", "label": "大小(MB)", "type": "number", "default": "100", "options": ""},
+                    {"name": "action", "label": "动作", "type": "select", "default": "显示", "options": "显示,删除"}
+                ]
+            }
+        }
+        save_templates(default_data)
+        return default_data
     
-    # 转为字典
-    cmd_map = {cmd.name: cmd for cmd in commands_list}
+    with open(DB_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-    # 2. 侧边栏
-    selected_name = st.sidebar.selectbox("选择命令", options=cmd_map.keys())
+def save_templates(data):
+    """保存数据到 JSON"""
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
 
-    # 3. 渲染逻辑
-    if selected_name:
-        strategy = cmd_map[selected_name]
-        st.header(strategy.name)
-        st.info(strategy.description)
+# ==========================================
+# 界面 1: 使用者面板 (生成命令)
+# ==========================================
+def render_generator_ui(templates):
+    st.header("🚀 命令生成器")
+    
+    if not templates:
+        st.warning("暂无模板，请去‘模板管理’添加。")
+        return
 
-        # 动态生成表单
-        with st.form("gen_form"):
-            user_inputs = {}
-            schema = strategy.get_params_schema()
+    # 1. 选择模板
+    selected_name = st.selectbox("选择操作", list(templates.keys()))
+    config = templates[selected_name]
+    
+    st.info(f"说明: {config.get('desc', '无描述')}")
+    st.markdown("---")
+
+    # 2. 动态渲染表单
+    user_inputs = {}
+    params = config.get("params", [])
+    
+    with st.form(key=f"form_{selected_name}"):
+        col1, col2 = st.columns(2)
+        
+        for idx, p in enumerate(params):
+            col = col1 if idx % 2 == 0 else col2
             
-            for field in schema:
-                label = field["label"]
-                key = field["name"]
-                ftype = field["type"]
-                default = field.get("default")
-                options = field.get("options")
-
-                if ftype == "text":
-                    user_inputs[key] = st.text_input(label, value=default)
-                elif ftype == "number":
-                    user_inputs[key] = st.number_input(label, value=default)
-                elif ftype == "select":
-                    user_inputs[key] = st.selectbox(label, options=options)
+            p_type = p.get("type", "text")
+            label = p.get("label", p["name"])
+            default_val = p.get("default", "")
             
-            submitted = st.form_submit_button("生成")
+            if p_type == "text":
+                user_inputs[p["name"]] = col.text_input(label, value=str(default_val))
+            
+            elif p_type == "number":
+                # 尝试转数字，防止报错
+                try:
+                    def_num = float(default_val) if default_val else 0.0
+                except:
+                    def_num = 0.0
+                user_inputs[p["name"]] = col.number_input(label, value=def_num)
+                
+            elif p_type == "select":
+                # 处理选项字符串 "A,B,C" -> ["A", "B", "C"]
+                opts = [x.strip() for x in p.get("options", "").split(",") if x.strip()]
+                user_inputs[p["name"]] = col.selectbox(label, options=opts)
 
-        if submitted:
-            result = strategy.generate(user_inputs)
-            st.success("生成结果：")
-            st.code(result, language="bash")
+        submitted = st.form_submit_button("⚡ 生成命令", use_container_width=True)
+
+    # 3. 结果输出
+    if submitted:
+        try:
+            # 简单处理安全路径
+            safe_inputs = {k: v for k, v in user_inputs.items()}
+            if "path" in safe_inputs and isinstance(safe_inputs["path"], str):
+                 safe_inputs["path"] = shlex.quote(safe_inputs["path"])
+
+            t = Template(config["template"])
+            res = t.render(**safe_inputs)
+            st.success("生成成功")
+            st.code(res, language="bash")
+        except Exception as e:
+            st.error(f"模板渲染错误: {e}")
+
+# ==========================================
+# 界面 2: 管理员面板 (添加/修改模板)
+# ==========================================
+def render_admin_ui(templates):
+    st.header("🛠️ 模板管理中心")
+    st.caption("在这里添加新的命令模板，无需修改代码。")
+
+    with st.expander("➕ 新建/编辑 模板", expanded=True):
+        # 1. 基础信息
+        c1, c2 = st.columns([1, 2])
+        edit_mode = c1.checkbox("编辑已有模板?")
+        
+        new_name = ""
+        new_desc = ""
+        new_template = ""
+        # 默认参数表格结构
+        default_df_data = [{"name": "param1", "label": "参数1", "type": "text", "default": "", "options": ""}]
+
+        if edit_mode:
+            target_name = c2.selectbox("选择要编辑的模板", list(templates.keys()))
+            if target_name:
+                curr = templates[target_name]
+                new_name = target_name
+                new_desc = curr.get("desc", "")
+                new_template = curr.get("template", "")
+                if curr.get("params"):
+                    default_df_data = curr.get("params")
+
+        # 输入区域
+        input_name = st.text_input("模板名称 (唯一ID)", value=new_name, disabled=edit_mode)
+        input_desc = st.text_input("功能描述", value=new_desc)
+        
+        st.markdown("**参数配置 (像 Excel 一样编辑)**")
+        st.caption("类型说明: text(文本), number(数字), select(下拉菜单-需在options列填逗号分隔的值)")
+        
+        # 参数编辑器
+        edited_df = st.data_editor(
+            pd.DataFrame(default_data=default_df_data),
+            num_rows="dynamic",
+            column_config={
+                "type": st.column_config.SelectboxColumn(
+                    "类型",
+                    options=["text", "number", "select"],
+                    required=True,
+                ),
+                "options": st.column_config.TextColumn(
+                    "选项 (仅Select有效)",
+                    help="用英文逗号分隔，如: read,write"
+                )
+            },
+            use_container_width=True
+        )
+
+        st.markdown("**命令模板 (Jinja2 语法)**")
+        input_template = st.text_area("Template Code", value=new_template, height=150, 
+                                      help="使用 {{ name }} 引用上方表格里的参数名")
+
+        # 保存按钮
+        if st.button("💾 保存/更新模板"):
+            if not input_name:
+                st.error("必须填写模板名称")
+            else:
+                # 转换 DataFrame 为 list[dict]
+                params_list = edited_df.to_dict(orient="records")
+                # 过滤空行
+                params_list = [p for p in params_list if p["name"]]
+                
+                templates[input_name] = {
+                    "desc": input_desc,
+                    "template": input_template,
+                    "params": params_list
+                }
+                save_templates(templates)
+                st.toast(f"模板 '{input_name}' 保存成功!", icon="✅")
+                st.rerun() # 刷新页面
+
+    # 2. 删除区域
+    st.markdown("---")
+    with st.expander("🗑️ 删除模板"):
+        del_name = st.selectbox("选择要删除的模板", list(templates.keys()), key="del_select")
+        if st.button("确认删除"):
+            if del_name in templates:
+                del templates[del_name]
+                save_templates(templates)
+                st.success(f"已删除 {del_name}")
+                st.rerun()
+
+# ==========================================
+# 主入口
+# ==========================================
+def main():
+    st.set_page_config(page_title="Ops工具箱 Pro", layout="wide")
+    
+    # 侧边栏导航
+    st.sidebar.title("Ops Command Center")
+    app_mode = st.sidebar.radio("模式切换", ["使用模式", "管理模式"])
+    
+    # 加载数据
+    all_templates = load_templates()
+
+    if app_mode == "使用模式":
+        render_generator_ui(all_templates)
+    else:
+        render_admin_ui(all_templates)
 
 if __name__ == "__main__":
     main()
-
-第四步：运行验证
- * 打开终端（命令行）。
- * 进入 ops_tool 文件夹：
-   cd ops_tool
-
- * 运行：
-   streamlit run app.py
-
-为什么这次一定行？
-因为我在 app.py 里写死了 from commands.linux_ops import FindLargeFilesCommand。
-如果你的文件夹结构不对（比如少了个 s，或者 __init__.py 没建），程序启动时就会直接报错告诉你找不到模块，而不是显示一个空白的下拉菜单让你猜原因。
-如何添加新命令？
- * 复制 commands/linux_ops.py 为 commands/sql_ops.py。
- * 修改里面的类名和逻辑。
- * 去 app.py 顶部加一行 from commands.sql_ops import 新类名。
- * 把新类加到 commands_list 列表里。
