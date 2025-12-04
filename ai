@@ -1,32 +1,34 @@
-这是一个非常棒的架构升级！你的需求已经从一个单纯的“脚本工具”通过“配置化”进化到了“低代码平台”，现在你要进一步将其升级为**“企业级运维工作台”**。
-为了实现高扩展性、双重配置管理以及多级导航布局，我们需要彻底重构代码结构。现在的单文件模式已经无法承载这个量级了，必须采用**模块化（Modular）**设计。
-我们分三步走：
- * 工程结构规划：设计解耦的文件目录。
- * 核心基建（Core）：实现双配置文件加载（组内+个人）和配置合并逻辑。
- * UI 框架（Shell）：实现你想要的主导航+子导航布局。
-以下是第一阶段的实施方案：
-1. 🏗️ 工程结构规划 (Architecture)
-我们将项目拆分为“核心框架”和“业务模块”。
+这不仅是一个脚本的完善，更是一次架构重构。我们将按照“企业级工具”的标准，把代码拆分为核心层（Core）、模块层（Modules）和入口层（Main）。
+这种结构完全满足你提到的：双配置文件（共享/个人）、三栏布局（主导航-子导航-内容）以及高扩展性。
+请在本地新建一个文件夹 ops_platform，然后严格按照以下目录结构创建文件。
+📂 1. 项目目录结构
 ops_platform/
-├── main.py                  # [入口] 负责整体布局、模块调度
-├── config.py                # [配置] 全局路径配置（如共享盘路径）
-├── core/                    # [内核] 通用组件，不涉及具体业务
+├── main.py                  # [入口] 程序启动文件，负责主导航
+├── requirements.txt         # 依赖库
+├── team_config.json         # (模拟) 放在共享盘的只读配置
+├── user_config.json         # (自动生成) 放在本地的个人配置
+├── core/                    # [核心层] 通用代码
 │   ├── __init__.py
-│   ├── config_manager.py    # 负责加载/合并 双份JSON
-│   └── ui_utils.py          # UI 辅助工具（统一的样式等）
-└── modules/                 # [插件] 所有的功能模块放这里
+│   └── config_manager.py    # 处理双配置文件的读取与合并
+└── modules/                 # [模块层] 所有业务功能放这里
     ├── __init__.py
-    └── cmd_generator/       # === 你的命令生成器模块 ===
-        ├── __init__.py      # 暴露模块信息
-        ├── app.py           # 该模块的主UI逻辑
-        └── data_handler.py  # 该模块的数据处理
+    └── cmd_generator/       # === 模块1: 命令生成器 ===
+        ├── __init__.py
+        └── app.py           # 该模块的所有UI和业务逻辑
 
-2. 🧠 核心基建：双配置管理 (core/config_manager.py)
-这个类负责同时读取“共享盘配置”和“本地配置”，并将它们合并。为了区分，我们会在读取时给数据打上标签（source: team 或 source: personal）。
-# core/config_manager.py
+📝 2. 核心代码实现
+请按顺序复制以下代码到对应文件。
+📄 文件 1: requirements.txt
+streamlit
+pandas
+jinja2
+
+📄 文件 2: core/config_manager.py
+核心逻辑：这里实现了“配置分层”。读取时合并（个人优先），写入时只写个人文件，保护共享配置不被修改。
 import json
 import os
-from typing import Dict, Any
+import uuid
+from typing import Dict, Any, List
 
 class ConfigManager:
     def __init__(self, team_path: str, user_path: str):
@@ -39,217 +41,373 @@ class ConfigManager:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"Error loading {path}: {e}")
+        except Exception:
             return {}
 
-    def save_user_config(self, data: Dict):
-        """只保存个人配置"""
-        # 实际保存时，应该只保存 source='personal' 的数据
-        # 这里简化处理，假设传入的就是要存的全量个人数据
-        os.makedirs(os.path.dirname(self.user_path), exist_ok=True)
-        with open(self.user_path, 'w', encoding='utf-8') as f:
+    def _save_json(self, path: str, data: Dict):
+        with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
-    def get_merged_templates(self) -> Dict[str, Any]:
-        """
-        合并策略：
-        1. 读取团队配置
-        2. 读取个人配置
-        3. 返回一个合并后的字典。
-        注意：如果同名，这里简单的让个人覆盖团队，或者你可以做成共存。
-        """
+    def get_all_templates(self) -> Dict[str, Any]:
+        """合并配置：Team + User"""
         team_data = self._load_json(self.team_path)
         user_data = self._load_json(self.user_path)
 
         merged = {}
-        
-        # 1. 标记团队模版
-        for name, content in team_data.items():
-            content['source'] = 'team'
-            content['category'] = content.get('category', '公共默认') # 默认分类
-            merged[name] = content
+        # 1. 载入团队模版 (标记为只读)
+        for k, v in team_data.items():
+            v['id'] = k
+            v['source'] = 'team'
+            v['category'] = v.get('category', '公共模版')
+            merged[k] = v
             
-        # 2. 标记个人模版 (可能会覆盖团队的同名模版)
-        for name, content in user_data.items():
-            content['source'] = 'personal'
-            content['category'] = content.get('category', '个人默认')
-            merged[name] = content
+        # 2. 载入个人模版 (同名会覆盖团队配置)
+        for k, v in user_data.items():
+            v['id'] = k
+            v['source'] = 'personal'
+            v['category'] = v.get('category', '个人模版')
+            merged[k] = v
             
         return merged
 
-3. 🎨 UI 框架：侧边栏多级导航 (main.py)
-Streamlit 原生只支持一个 Sidebar。为了实现你描述的 “主导航(左侧细条) -> 子导航(展开) -> 内容”，我们需要一种稍微变通但效果很好的布局方式：
- * 主导航：使用 sidebar 顶部的 selectbox 或 radio 来切换大模块。
- * 子导航：根据主导航的选择，动态渲染 sidebar 下半部分的内容（比如分类树）。
- * 内容区：右侧主界面。
-下面是 main.py 的代码，它搭建了整个平台的骨架：
-# main.py
+    def save_template(self, template_id: str, template_data: Dict):
+        """保存模版：只写入 user_config.json"""
+        user_data = self._load_json(self.user_path)
+        
+        # 确保保存进去的数据干净
+        save_payload = {
+            "name": template_data.get("name"),
+            "desc": template_data.get("desc"),
+            "category": template_data.get("category"),
+            "template": template_data.get("template"),
+            "params": template_data.get("params"),
+            "updated_at": "now" # 简单标记
+        }
+        
+        user_data[template_id] = save_payload
+        self._save_json(self.user_path, user_data)
+
+    def delete_template(self, template_id: str):
+        """删除模版：只能删除个人的"""
+        user_data = self._load_json(self.user_path)
+        if template_id in user_data:
+            del user_data[template_id]
+            self._save_json(self.user_path, user_data)
+            return True
+        return False
+
+📄 文件 3: modules/cmd_generator/app.py
+模块逻辑：实现了你要求的“子导航折叠分类”、“新增分类下拉框”以及“三栏布局的中间栏和右侧内容”。
+import streamlit as st
+import pandas as pd
+from jinja2 import Template
+import shlex
+import uuid
+
+# 常量定义
+MODE_LIST = "📂 模板列表"
+MODE_ADMIN = "🛠️ 管理模板"
+
+def render(cfg_mgr):
+    """
+    模块入口函数
+    """
+    # 1. 获取最新数据
+    templates = cfg_mgr.get_all_templates()
+    
+    # 初始化 Session State
+    if 'selected_template_id' not in st.session_state:
+        st.session_state['selected_template_id'] = None
+    if 'nav_mode' not in st.session_state:
+        st.session_state['nav_mode'] = MODE_LIST
+
+    # ==================================================
+    # [子导航栏] (对应三栏布局的中间栏)
+    # ==================================================
+    with st.sidebar:
+        st.header("生成器菜单")
+        
+        # 切换模式：浏览 vs 管理
+        mode = st.radio("模式", [MODE_LIST, MODE_ADMIN], label_visibility="collapsed")
+        st.session_state['nav_mode'] = mode
+        st.markdown("---")
+
+        if mode == MODE_LIST:
+            st.caption("按分类浏览")
+            # 提取所有分类并排序
+            all_cats = sorted(list(set(t['category'] for t in templates.values())))
+            
+            for cat in all_cats:
+                # 筛选该分类下的模版
+                cat_items = [t for t in templates.values() if t['category'] == cat]
+                
+                # 核心需求：可折叠分类列表
+                with st.expander(f"📁 {cat} ({len(cat_items)})", expanded=False):
+                    for item in cat_items:
+                        # 选中按钮
+                        label = item.get('name', '未命名')
+                        if st.button(label, key=f"btn_{item['id']}", use_container_width=True):
+                            st.session_state['selected_template_id'] = item['id']
+
+        elif mode == MODE_ADMIN:
+            st.caption("模板维护")
+            if st.button("➕ 新建空模板", use_container_width=True):
+                st.session_state['selected_template_id'] = "NEW_TEMPLATE"
+
+    # ==================================================
+    # [主内容区] (对应三栏布局的右侧详情)
+    # ==================================================
+    current_id = st.session_state.get('selected_template_id')
+
+    # 路由逻辑
+    if st.session_state['nav_mode'] == MODE_ADMIN:
+        # 进入管理界面
+        render_admin_ui(cfg_mgr, templates, current_id)
+    else:
+        # 进入使用界面
+        if current_id and current_id in templates:
+            render_generator_ui(templates[current_id])
+        else:
+            st.info("👈 请在左侧侧边栏选择一个模板开始使用")
+
+# ------------------------------------------------------
+# UI 组件：生成器界面
+# ------------------------------------------------------
+def render_generator_ui(config):
+    st.subheader(f"🚀 {config.get('name')}")
+    st.caption(config.get('desc'))
+    
+    # 来源标识
+    if config.get('source') == 'team':
+        st.markdown("`🏢 团队公共模版`")
+    else:
+        st.markdown("`👤 个人私有模版`")
+
+    st.markdown("---")
+    
+    # 动态表单
+    user_inputs = {}
+    params = config.get("params", [])
+    
+    with st.form(key=f"form_{config['id']}"):
+        col1, col2 = st.columns(2)
+        for idx, p in enumerate(params):
+            col = col1 if idx % 2 == 0 else col2
+            p_name = p.get("name")
+            p_label = p.get("label", p_name)
+            p_type = p.get("type", "text")
+            p_default = p.get("default", "")
+            
+            if p_type == "text":
+                user_inputs[p_name] = col.text_input(p_label, value=str(p_default))
+            elif p_type == "number":
+                user_inputs[p_name] = col.number_input(p_label, value=float(p_default) if p_default else 0.0)
+            elif p_type == "select":
+                opts = [x.strip() for x in p.get("options", "").split(",") if x.strip()]
+                user_inputs[p_name] = col.selectbox(p_label, options=opts)
+        
+        submitted = st.form_submit_button("生成命令", use_container_width=True)
+    
+    if submitted:
+        try:
+            # 安全处理
+            safe_inputs = {k: (shlex.quote(v) if isinstance(v, str) else v) for k, v in user_inputs.items()}
+            t = Template(config.get("template", ""))
+            res = t.render(**safe_inputs)
+            st.success("生成结果：")
+            st.code(res, language="bash")
+        except Exception as e:
+            st.error(f"渲染失败: {e}")
+
+# ------------------------------------------------------
+# UI 组件：管理界面
+# ------------------------------------------------------
+def render_admin_ui(cfg_mgr, templates, current_id):
+    st.header("🛠️ 模板编辑器")
+
+    # 数据准备
+    is_new = (current_id == "NEW_TEMPLATE")
+    data = {}
+    
+    if not is_new and current_id in templates:
+        data = templates[current_id]
+        if data.get('source') == 'team':
+            st.warning("⚠️ 你正在查看一个【团队公共模版】。保存后它将作为【个人模版】另存一份，不会修改原文件。")
+    
+    # --- 表单开始 ---
+    # 1. 基础信息
+    c1, c2 = st.columns([1, 2])
+    
+    # 核心需求：分类选择 + 新增功能
+    existing_cats = sorted(list(set(t['category'] for t in templates.values())))
+    if "默认分类" not in existing_cats: existing_cats.append("默认分类")
+    
+    # 下拉框选项：增加一个特殊选项
+    cat_options = existing_cats + ["➕ 新增分类..."]
+    
+    default_cat_idx = 0
+    if not is_new and data.get('category') in existing_cats:
+        default_cat_idx = existing_cats.index(data.get('category'))
+        
+    selected_cat_op = c1.selectbox("所属分类", cat_options, index=default_cat_idx)
+    
+    # 如果选中了新增，显示输入框
+    final_category = selected_cat_op
+    if selected_cat_op == "➕ 新增分类...":
+        final_category = c1.text_input("请输入新分类名称", placeholder="例如: 数据库巡检")
+        if not final_category: final_category = "未分类"
+
+    name_val = data.get('name', '')
+    input_name = c2.text_input("模板名称", value=name_val)
+    input_desc = st.text_input("功能描述", value=data.get('desc', ''))
+
+    # 2. 参数编辑器 (Pandas Editor)
+    st.markdown("**参数定义**")
+    default_df = data.get('params', [{"name": "param1", "label": "示例参数", "type": "text", "default": "", "options": ""}])
+    
+    edited_df = st.data_editor(
+        pd.DataFrame(default_df),
+        num_rows="dynamic",
+        column_config={
+            "type": st.column_config.SelectboxColumn("类型", options=["text", "number", "select"], required=True),
+            "options": st.column_config.TextColumn("选项 (仅Select有效)", help="逗号分隔")
+        },
+        use_container_width=True
+    )
+
+    # 3. 模板代码
+    st.markdown("**Jinja2 模板代码**")
+    input_template = st.text_area("Code", value=data.get('template', ''), height=150)
+
+    # 4. 保存按钮
+    c_btn1, c_btn2 = st.columns([1, 5])
+    if c_btn1.button("💾 保存模板"):
+        if not input_name:
+            st.error("必须填写名称")
+            return
+            
+        # 生成 ID (如果是新建，或者是复制Team的，都生成新ID)
+        if is_new or (data.get('source') == 'team'):
+            save_id = str(uuid.uuid4())[:8]
+        else:
+            save_id = current_id
+            
+        # 整理数据
+        params_list = edited_df.to_dict(orient="records")
+        params_list = [p for p in params_list if p["name"]] # 过滤空行
+        
+        save_data = {
+            "name": input_name,
+            "desc": input_desc,
+            "category": final_category,
+            "template": input_template,
+            "params": params_list
+        }
+        
+        cfg_mgr.save_template(save_id, save_data)
+        st.toast(f"保存成功! ID: {save_id}", icon="✅")
+        # 刷新页面状态
+        st.session_state['selected_template_id'] = save_id
+        st.session_state['nav_mode'] = MODE_LIST # 保存后跳回列表看效果
+        st.rerun()
+
+    # 删除按钮 (仅个人模版可见)
+    if not is_new and data.get('source') == 'personal':
+        if c_btn2.button("🗑️ 删除", type="primary"):
+            cfg_mgr.delete_template(current_id)
+            st.session_state['selected_template_id'] = None
+            st.rerun()
+
+📄 文件 4: main.py
+入口逻辑：这是最外层的框架，负责第一级导航（粗的那一条），并将上下文传递给模块。
 import streamlit as st
 import os
 from core.config_manager import ConfigManager
-# 动态导入模块 (模拟解耦)
+# 导入业务模块
 from modules.cmd_generator import app as cmd_app
 
 # --- 全局配置 ---
-# 真实场景请换成你的共享盘路径，例如 r"Z:\Shared\ops_tool\team_config.json"
-TEAM_CONFIG_PATH = "team_config.json" 
+# 建议：这里将来可以改成从环境变量读取，或者直接写死你的共享盘路径
+# 例如: TEAM_CONFIG_PATH = r"Z:\Public\OpsTools\team_config.json"
+TEAM_CONFIG_PATH = "team_config.json"
 USER_CONFIG_PATH = "user_config.json"
-
-# 初始化管理器
-cfg_mgr = ConfigManager(TEAM_CONFIG_PATH, USER_CONFIG_PATH)
 
 def main():
     st.set_page_config(page_title="Ops Workstation", layout="wide", page_icon="🛠️")
 
-    # =============================================
-    # 1. 主导航栏 (Level 1 Navigation)
-    # =============================================
+    # 初始化配置管理器
+    cfg_mgr = ConfigManager(TEAM_CONFIG_PATH, USER_CONFIG_PATH)
+
+    # ==========================================
+    # [主导航栏] (最左侧，一级导航)
+    # ==========================================
     with st.sidebar:
-        st.title("🚀 Ops Platform")
+        st.title("Ops Platform")
         
-        # 以后如果有新模块，就在这里加
+        # 模块注册表
         MODULES = {
             "cmd_gen": "📝 命令生成器",
-            "dashboard": "📊 监控大盘 (规划中)",
-            "settings": "⚙️ 全局设置"
+            "db_tools": "🗄️ 数据库工具 (规划)",
+            "monitor": "📊 监控大盘 (规划)"
         }
         
-        # 使用 radio 模拟左侧主导航
-        selected_module_key = st.radio(
-            "功能模块", 
+        # 使用 radio 模拟一级菜单
+        selected_mod = st.radio(
+            "主菜单", 
             options=list(MODULES.keys()), 
             format_func=lambda x: MODULES[x],
             label_visibility="collapsed"
         )
         
-        st.markdown("---") # 分割线
+        st.markdown("---")
+        # 这里以后可以放用户信息等
+        st.caption(f"Config: {os.path.basename(USER_CONFIG_PATH)}")
 
-    # =============================================
-    # 2. 模块分发 (Router)
-    # =============================================
-    if selected_module_key == "cmd_gen":
-        # 进入命令生成器模块，把侧边栏的控制权交给它
+    # ==========================================
+    # [模块分发]
+    # ==========================================
+    if selected_mod == "cmd_gen":
+        # 进入命令生成器模块
+        # 把配置管理器传进去，让模块自己去读写数据
         cmd_app.render(cfg_mgr)
         
-    elif selected_module_key == "dashboard":
-        st.title("监控大盘")
-        st.info("此模块正在开发中...")
+    elif selected_mod == "db_tools":
+        st.title("数据库工具箱")
+        st.info("🚧 正在施工中... 这里将展示解耦合的优势，代码完全独立。")
         
-    elif selected_module_key == "settings":
-        st.title("全局设置")
-        st.write(f"团队配置路径: `{TEAM_CONFIG_PATH}`")
-        st.write(f"个人配置路径: `{USER_CONFIG_PATH}`")
+    elif selected_mod == "monitor":
+        st.title("监控中心")
+        st.info("🚧 正在施工中...")
 
 if __name__ == "__main__":
     main()
 
-4. 🧩 业务模块改造 (modules/cmd_generator/app.py)
-这是你需要把之前的代码逻辑迁移进来的地方。针对你提出的**“分类折叠”和“管理/使用分离”**，我为你重写了 UI 逻辑。
-# modules/cmd_generator/app.py
-import streamlit as st
-from jinja2 import Template
-import shlex
-import pandas as pd
+🚀 3. 如何运行与验证
+ * 创建虚拟环境数据（可选但推荐）：
+   在 team_config.json 中手动填入一些假数据，模拟你们组长的配置：
+   {
+    "team_demo_01": {
+        "name": "Oracle表空间查询",
+        "desc": "查询表空间使用率",
+        "category": "数据库巡检",
+        "template": "SELECT * FROM dba_tablespaces WHERE tablespace_name = '{{ ts_name }}'",
+        "params": [{"name": "ts_name", "label": "表空间名", "type": "text", "default": "USERS"}]
+    }
+}
 
-def render(cfg_mgr):
-    """
-    命令生成器的主入口
-    cfg_mgr: 传入配置管理器实例
-    """
-    # 获取合并后的所有数据
-    templates = cfg_mgr.get_merged_templates()
-    
-    # ==========================================
-    # 侧边栏：子导航 (Level 2 Navigation)
-    # ==========================================
-    with st.sidebar:
-        st.subheader("功能菜单")
-        # 两个大模式
-        mode = st.radio("模式选择", ["📂 模板列表", "🛠️ 管理模板"], label_visibility="collapsed")
-        
-        selected_template_name = None
-        
-        # 模式 A: 模板列表 (使用/生成)
-        if mode == "📂 模板列表":
-            # --- 核心需求：分类筛选 ---
-            # 1. 提取所有分类
-            all_categories = sorted(list(set(t.get('category', '未分类') for t in templates.values())))
-            
-            # 2. 渲染分类折叠菜单 (Expander)
-            for cat in all_categories:
-                # 找出该分类下的所有模板
-                cat_templates = [name for name, t in templates.items() if t.get('category') == cat]
-                
-                with st.expander(f"📁 {cat} ({len(cat_templates)})", expanded=False):
-                    # 在每个分类里放置按钮或单选
-                    for t_name in cat_templates:
-                        # 使用 button 模拟链接点击
-                        if st.button(t_name, key=f"btn_{t_name}"):
-                            st.session_state['current_template'] = t_name
+ * 启动程序：
+   streamlit run main.py
 
-        # 模式 B: 管理模板 (增删改) - 直接点击侧边栏不展开，右侧显示管理页
-        elif mode == "🛠️ 管理模板":
-            st.session_state['current_template'] = "__ADMIN__"
-
-    # ==========================================
-    # 右侧主内容区 (Main Content)
-    # ==========================================
-    
-    current = st.session_state.get('current_template')
-
-    if current == "__ADMIN__":
-        render_admin_panel(cfg_mgr, templates)
-    elif current and current in templates:
-        render_generator_panel(templates[current])
-    else:
-        st.info("👈 请在左侧选择一个模板开始使用")
-
-# --- 具体的渲染函数 (逻辑与之前类似，稍微封装一下) ---
-
-def render_generator_panel(config):
-    st.header(f"生成: {config.get('desc', '无描述')}")
-    # 显示来源标签
-    if config.get('source') == 'team':
-        st.caption("🏢 团队共享模板 (只读建议)")
-    else:
-        st.caption("👤 个人模板")
-        
-    # ... (这里放之前 render_generator_ui 的表单逻辑) ...
-    st.warning("此处应显示之前的表单生成逻辑，因篇幅折叠...")
-
-def render_admin_panel(cfg_mgr, templates):
-    st.header("模板管理")
-    
-    # 提取所有现有分类，用于下拉框自动补全
-    existing_categories = sorted(list(set(t.get('category', '') for t in templates.values() if t.get('category'))))
-    
-    with st.expander("➕ 新增/编辑模板", expanded=True):
-        c1, c2 = st.columns([1, 1])
-        # 1. 分类选择 (核心需求：可选择 + 可输入)
-        # Streamlit 的 selectbox 不支持直接输入新值，需用 combo box 或 text_input 配合
-        # 方案：两步走，或者用 tag input。这里用最稳妥的方案：Selectbox 包含 "新建..."
-        
-        select_options = existing_categories + ["➕ 新建分类..."]
-        cat_selection = c1.selectbox("所属分类", select_options)
-        
-        final_category = cat_selection
-        if cat_selection == "➕ 新建分类...":
-            final_category = c1.text_input("输入新分类名称", placeholder="例如: 数据库维护")
-            
-        name = c2.text_input("模板名称")
-        
-        # ... (其余参数编辑逻辑，与之前一致) ...
-        st.write(f"即将保存到分类: **{final_category}**")
-        st.button("保存 (示例)")
-
-当前架构的优点：
- * 真正的解耦：main.py 不包含任何生成命令的逻辑，它只负责“路由”。以后你要加“数据库审计工具”，只需要在 modules 下新建一个文件夹，然后在 main.py 里注册两行代码。
- * 配置分离：通过 ConfigManager，你可以放心把代码部署给同事。同事的修改只会存到 user_config.json，不会污染你的 team_config.json（除非你有意合并）。
- * 符合直觉的导航：左侧大类 -> 左侧详细树状图 -> 右侧操作。
-下一步建议
-这只是把骨架搭好了。接下来我们需要把具体的逻辑填充进去。
-你需要我先帮你完善 modules/cmd_generator/app.py 里的：
- * Generator 渲染逻辑（把之前的代码搬进来）。
- * Admin 管理逻辑（特别是如何处理 Team 配置只读、Personal 配置可写的问题）。
-还是说你想先要在本地把这个目录结构建起来跑通一下？
+✨ 你会看到的效果：
+ * 最左侧主导航：可以切换“命令生成器”和其他画饼的模块。
+ * 中间子导航：
+   * 点击 “📂 模板列表”：你会看到“数据库巡检”这个分类，点开里面有“Oracle表空间查询”。
+   * 点击 “🛠️ 管理模板”：右侧出现编辑器。
+ * 分类新建：
+   * 在管理界面，下拉框选择 “➕ 新增分类...”，下面会自动弹出一个输入框让你填新名字。
+   * 填入内容并保存后，左侧的列表中会自动出现这个新分类。
+ * 配置分离：
+   * 你去修改刚才那个“Oracle表空间查询”，点保存。
+   * 你会发现 team_config.json 没变。
+   * 你的文件夹里多了一个 user_config.json，里面存了你修改后的版本（这就是“影子覆盖”）。
+这一套架构，无论是界面布局还是代码结构，都已经具备了中型内部工具平台的雏形。请先跑通，有问题我们继续微调！
