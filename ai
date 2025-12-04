@@ -1,95 +1,5 @@
-这是一个非常棒的决定！要打造**“商业级”**的 UI 体验，光靠 Streamlit 原生组件（Native Components）是不够的，因为它们的设计初衷是“快速原型”而非“精美产品”。
-为了实现你的愿景，我将引入一个在 Streamlit 社区评价极高的第三方 UI 库：Streamlit Antd Components (SAC)。
-🛠️ 核心武器库
- * streamlit-antd-components (SAC):
-   * 这是基于 Ant Design（企业级 UI 设计语言）封装的组件库。
-   * 用途：我们将用它来做侧边栏菜单（带精美图标）、分段控制器（切换公有/私有）、Steps 步骤条等。它的颜值比原生组件高一个档次。
- * st.dialog (Streamlit 原生模态框):
-   * 这是 Streamlit 1.34+ 新出的功能。
-   * 用途：解决“列表太长操作不便”的问题。点击列表行，直接在屏幕中央弹窗运行，无需跳转。
-📂 1. 更新依赖 requirements.txt
-请务必先安装这个新库：
-streamlit>=1.35.0
-pandas
-jinja2
-streamlit-antd-components
-
-安装命令：
-pip install -r requirements.txt
-
-📂 2. 数据层升级 (core 目录)
-我们需要新增标签管理逻辑，并更新配置管理器以支持标签。
-📄 core/tag_manager.py (新增)
-管理标签的增删改查。
-import json
-import os
-import uuid
-
-class TagManager:
-    def __init__(self, tag_file="tags.json"):
-        self.file_path = tag_file
-
-    def get_all_tags(self):
-        if not os.path.exists(self.file_path):
-            # 默认初始化一些标签
-            default_tags = {
-                "t1": {"name": "Linux", "color": "#f50", "group": "技术栈"},
-                "t2": {"name": "Oracle", "color": "#f50", "group": "技术栈"},
-                "t3": {"name": "生产环境", "color": "#87d068", "group": "环境"},
-                "t4": {"name": "高危", "color": "#ff0000", "group": "风险"}
-            }
-            self._save(default_tags)
-            return default_tags
-        with open(self.file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-    def save_tag(self, tag_id, name, color, group):
-        tags = self.get_all_tags()
-        if not tag_id: tag_id = str(uuid.uuid4())[:8]
-        tags[tag_id] = {"name": name, "color": color, "group": group}
-        self._save(tags)
-        return tag_id
-
-    def delete_tag(self, tag_id):
-        tags = self.get_all_tags()
-        if tag_id in tags:
-            del tags[tag_id]
-            self._save(tags)
-
-    def _save(self, data):
-        with open(self.file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-
-📄 core/config_manager.py (微调)
-只需要确保 save_template 支持 tags 字段即可。之前的代码基本兼容，为了保险，确保 save 部分如下：
-# ... (保留之前的 imports)
-
-class ConfigManager:
-    # ... (保留 __init__, _load_json, get_all_templates)
-
-    def save_template(self, template_id: str, template_data: Dict):
-        user_data = self._load_json(self.user_path)
-        
-        # 确保保存 tags 字段
-        save_payload = {
-            "name": template_data.get("name"),
-            "desc": template_data.get("desc"),
-            # "category": ... (旧分类字段可留可不留，建议保留兼容)
-            "tags": template_data.get("tags", []), # === 新增 ===
-            "template": template_data.get("template"),
-            "params": template_data.get("params"),
-            "updated_at": "now"
-        }
-        
-        user_data[template_id] = save_payload
-        self._save_json(self.user_path, user_data)
-    
-    # ... (保留 delete_template 等)
-
-🎨 3. 主入口美化 (main.py)
-使用 sac.menu 替换原来的 radio，瞬间提升 B 格。
 import streamlit as st
-import streamlit_antd_components as sac # 引入神库
+import streamlit_antd_components as sac
 from core.config_manager import ConfigManager
 from core.tag_manager import TagManager
 from modules.cmd_generator import app as cmd_app
@@ -107,38 +17,58 @@ def main():
     tag_mgr = TagManager(TAG_CONFIG)
 
     # ==========================================
-    # 🎨 1. 商业级侧边栏 (Ant Design Style)
+    # 1. 侧边栏菜单
     # ==========================================
     with st.sidebar:
-        # 顶部 Logo 区域
         st.markdown("### ⚡ Ops Platform")
         st.caption("Enterprise Edition v3.0")
         
-        # SAC 菜单组件
-        selected_key = sac.menu([
+        # 注意：这里去掉了 key 参数，完全依赖中文名称
+        selected_label = sac.menu([
             sac.MenuItem('控制台', icon='house-fill', children=[
-                sac.MenuItem('命令生成器', icon='terminal', key='cmd_gen'),
-                sac.MenuItem('监控大盘', icon='speedometer', key='monitor', disabled=True),
+                sac.MenuItem('命令生成器', icon='terminal'),
+                sac.MenuItem('监控大盘', icon='speedometer', disabled=True),
             ]),
             sac.MenuItem(type='divider'),
             sac.MenuItem('资源管理', icon='database', children=[
-                sac.MenuItem('标签管理', icon='tags', key='tag_mgr'),
+                sac.MenuItem('标签管理', icon='tags'),
             ]),
-            sac.MenuItem('系统设置', icon='gear', key='settings'),
+            sac.MenuItem('系统设置', icon='gear'),
         ], color='blue', open_all=True)
+        
+        # --- 🔍 调试信息 (排查完可以删掉) ---
+        # st.write(f"Debug: You selected: `{selected_label}`")
 
     # ==========================================
-    # 🚀 2. 路由分发
+    # 2. 路由分发 (带兜底逻辑)
     # ==========================================
-    if selected_key == 'cmd_gen':
-        cmd_app.render(cfg_mgr, tag_mgr)
-        
-    elif selected_key == 'tag_mgr':
+    
+    # 1. 命令生成器
+    if selected_label == '命令生成器':
+        try:
+            cmd_app.render(cfg_mgr, tag_mgr)
+        except Exception as e:
+            st.error(f"模块加载失败: {e}")
+            st.code(str(e)) # 打印详细报错
+            
+    # 2. 标签管理
+    elif selected_label == '标签管理':
         render_tag_manager(tag_mgr)
         
-    elif selected_key == 'settings':
+    # 3. 系统设置
+    elif selected_label == '系统设置':
         st.header("⚙️ 系统设置")
         st.info(f"Team Config: {TEAM_CONFIG}\n\nUser Config: {USER_CONFIG}")
+        
+    # 4. 兜底逻辑 (防止白屏)
+    else:
+        # 如果选中的是父级菜单（如'控制台'），或者其他未匹配项，显示欢迎页
+        st.title("👋 欢迎使用 Ops Platform")
+        st.markdown(f"""
+        当前选中菜单: **{selected_label}**
+        
+        请在左侧侧边栏点击具体的子功能（例如：**命令生成器**）。
+        """)
 
 # ==========================================
 # 🏷️ 标签管理简易界面
@@ -146,19 +76,21 @@ def main():
 def render_tag_manager(tag_mgr):
     st.title("🏷️ 标签分类管理")
     
-    # 左列表 右编辑
     c1, c2 = st.columns([1, 2])
     tags = tag_mgr.get_all_tags()
     
     with c1:
         st.caption("现有标签")
-        # 简单的列表展示
-        df = [{"ID": k, "名称": v['name'], "组": v['group']} for k,v in tags.items()]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        if tags:
+            # 转换为表格数据
+            df = [{"名称": v['name'], "组": v['group'], "颜色": v['color']} for k,v in tags.items()]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("暂无标签数据")
 
     with c2:
         with st.container(border=True):
-            st.subheader("新增/编辑标签")
+            st.subheader("新增标签")
             new_name = st.text_input("标签名称")
             new_group = st.text_input("标签组 (如: 数据库, 环境)", value="通用")
             new_color = st.color_picker("标签颜色", "#3498db")
@@ -170,245 +102,3 @@ def render_tag_manager(tag_mgr):
 
 if __name__ == "__main__":
     main()
-
-💎 4. 核心业务重构 (modules/cmd_generator/app.py)
-这是重头戏。
- * Tab 分离：顶部使用 sac.segmented 切换公共库/私有库。
- * 标签筛选：使用 st.multiselect 聚合筛选。
- * 列表+弹窗：使用 st.dataframe(on_select) + @st.dialog 实现丝滑操作。
-<!-- end list -->
-import streamlit as st
-import streamlit_antd_components as sac
-import pandas as pd
-from jinja2 import Template
-import shlex
-import uuid
-import time
-
-# ==========================================
-# 🎨 CSS 美化
-# ==========================================
-def inject_css():
-    st.markdown("""
-        <style>
-        .stApp { font-family: 'Inter', sans-serif; }
-        /* 调整 DataFrame 选中行的颜色 */
-        [data-testid="stDataFrame"] { border: 1px solid #eee; border-radius: 8px; }
-        /* 终端样式 */
-        .terminal { background:#1e1e1e; color:#d4d4d4; padding:15px; border-radius:6px; font-family:'Fira Code'; }
-        </style>
-    """, unsafe_allow_html=True)
-
-# ==========================================
-# 🧠 主逻辑
-# ==========================================
-def render(cfg_mgr, tag_mgr):
-    inject_css()
-    
-    # 1. 顶部 Tab 切换 (SAC 组件)
-    st.title("🚀 命令生成工作台")
-    
-    # 这种分段控制器比原生 Tab 好看太多了
-    source_tab = sac.segmented(
-        items=[
-            sac.SegmentedItem(label='团队公共库', icon='buildings', value='team'),
-            sac.SegmentedItem(label='我的私有库', icon='person-lock', value='personal'),
-        ], align='center', size='md', color='indigo'
-    )
-    
-    # 2. 准备数据
-    all_templates = cfg_mgr.get_all_templates()
-    all_tags = tag_mgr.get_all_tags()
-    
-    # 过滤当前 Tab 的数据
-    current_list = {k: v for k, v in all_templates.items() if v.get('source') == source_tab}
-    
-    # 3. 筛选栏 (Filter Bar)
-    with st.container(border=True):
-        c1, c2, c3 = st.columns([4, 4, 2])
-        search_txt = c1.text_input("搜索", placeholder="输入名称或描述...", label_visibility="collapsed")
-        
-        # 标签下拉选项构建
-        tag_options = {tid: t['name'] for tid, t in all_tags.items()}
-        selected_tags = c2.multiselect("标签筛选", options=tag_options.keys(), format_func=lambda x: tag_options[x], label_visibility="collapsed", placeholder="按标签筛选...")
-        
-        # 新建按钮 (只在私有库显示，或者公共库也显示但保存时另存)
-        if c3.button("➕ 新建脚本", type="primary", use_container_width=True):
-            open_editor_dialog(cfg_mgr, tag_mgr, "NEW", source_tab)
-
-    # 4. 数据过滤逻辑
-    display_items = []
-    for tid, t in current_list.items():
-        # 搜索匹配
-        if search_txt and (search_txt.lower() not in t['name'].lower()):
-            continue
-        # 标签匹配 (交集逻辑：只要包含选中的任意一个标签就显示，或者全部匹配)
-        t_tags = t.get('tags', [])
-        if selected_tags and not set(selected_tags).intersection(set(t_tags)):
-            continue
-            
-        # 格式化 Tags用于显示
-        tag_names = [all_tags[tg]['name'] for tg in t_tags if tg in all_tags]
-        
-        display_items.append({
-            "ID": tid,
-            "名称": t['name'],
-            "标签": tag_names, # 列表会被 DataFrame 渲染成漂亮的 Pill
-            "描述": t.get('desc', ''),
-            "raw_tags": t_tags # 隐藏列，用于传递数据
-        })
-
-    # 5. 渲染列表 (Commercial List View)
-    if not display_items:
-        st.info("👋 此库暂无数据，点击右上角新建。")
-        return
-
-    df = pd.DataFrame(display_items)
-    
-    st.caption(f"共加载 {len(df)} 个模版")
-    
-    # 配置 DataFrame 列展示
-    selection = st.dataframe(
-        df,
-        column_config={
-            "ID": None,
-            "raw_tags": None,
-            "名称": st.column_config.TextColumn("脚本名称", width="medium"),
-            "标签": st.column_config.ListColumn("标签", width="medium"), # 自动渲染为胶囊样式
-            "描述": st.column_config.TextColumn("功能描述", width="large"),
-        },
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun", # 选中触发重运行
-        selection_mode="single-row"
-    )
-
-    # 6. 处理选中事件 -> 弹出模态框
-    if len(selection.selection.rows) > 0:
-        row_idx = selection.selection.rows[0]
-        selected_id = df.iloc[row_idx]['ID']
-        # 打开运行弹窗
-        open_runner_dialog(cfg_mgr, selected_id)
-
-
-# ==========================================
-# 🏃‍♂️ 弹窗组件：运行器 (The Runner)
-# ==========================================
-@st.dialog("⚡ 运行控制台", width="large")
-def open_runner_dialog(cfg_mgr, tid):
-    # 重新获取最新数据
-    templates = cfg_mgr.get_all_templates()
-    data = templates.get(tid)
-    
-    if not data:
-        st.error("模版数据丢失")
-        return
-
-    st.caption(f"正在配置: {data['name']}")
-    
-    # 左右布局：左参右果
-    c1, c2 = st.columns([1, 1.2], gap="medium")
-    
-    user_inputs = {}
-    with c1:
-        st.subheader("参数配置")
-        with st.form("modal_form"):
-            params = data.get('params', [])
-            for p in params:
-                label = p.get('label', p['name'])
-                if p['type'] == 'select':
-                    opts = [x.strip() for x in p.get("options", "").split(",") if x.strip()]
-                    user_inputs[p['name']] = st.selectbox(label, opts)
-                elif p['type'] == 'number':
-                    user_inputs[p['name']] = st.number_input(label, value=float(p.get('default', 0)))
-                else:
-                    user_inputs[p['name']] = st.text_input(label, value=str(p.get('default', '')))
-            
-            submitted = st.form_submit_button("生成预览", type="primary", use_container_width=True)
-
-    with c2:
-        st.subheader("Terminal Preview")
-        res_text = "# 等待输入..."
-        if submitted:
-            try:
-                safe = {k: (shlex.quote(str(v)) if isinstance(v, str) else v) for k, v in user_inputs.items()}
-                t = Template(data.get('template', ''))
-                res_text = t.render(**safe)
-            except Exception as e:
-                res_text = f"Error: {e}"
-        
-        st.markdown(f'<div class="terminal">{res_text}</div>', unsafe_allow_html=True)
-        if submitted:
-            st.code(res_text) # 方便复制
-
-    st.markdown("---")
-    # 底部操作栏：编辑入口
-    c_edit, c_close = st.columns([1, 5])
-    if c_edit.button("✏️ 编辑此模版"):
-        # 关闭当前 dialog，打开编辑 dialog (这里为了简化，实际可以用 session_state 控制切换)
-        st.session_state['edit_target'] = tid
-        st.rerun() # 触发主循环进入编辑态
-
-# ==========================================
-# 📝 弹窗组件：编辑器 (The Editor)
-# ==========================================
-# 注意：Streamlit 不支持 Dialog 嵌套。
-# 实际项目中，如果点击"编辑"，建议用 session_state 控制主界面显示 Editor，而不是 Dialog。
-# 但为了演示 Dialog 的强大，我们这里假设 Editor 也是一个 Dialog (新建时用)。
-@st.dialog("🛠️ 模版编辑器", width="large")
-def open_editor_dialog(cfg_mgr, tag_mgr, tid, default_source):
-    is_new = (tid == "NEW")
-    templates = cfg_mgr.get_all_templates()
-    data = {} if is_new else templates.get(tid, {})
-    
-    name = st.text_input("名称", value=data.get('name', ''))
-    
-    # 标签选择器
-    all_tags = tag_mgr.get_all_tags()
-    tag_opts = {k: v['name'] for k, v in all_tags.items()}
-    default_tags = data.get('tags', [])
-    # 过滤掉已删除的 tag id
-    default_tags = [t for t in default_tags if t in tag_opts]
-    
-    sel_tags = st.multiselect("标签", options=tag_opts.keys(), default=default_tags, format_func=lambda x: tag_opts[x])
-    
-    desc = st.text_input("描述", value=data.get('desc', ''))
-    
-    # 参数表格
-    st.caption("参数定义")
-    default_params = data.get('params', [{"name": "ip", "label": "IP地址", "type": "text", "default": "", "options": ""}])
-    edited_df = st.data_editor(pd.DataFrame(default_params), num_rows="dynamic", use_container_width=True)
-    
-    code = st.text_area("Jinja2 Code", value=data.get('template', ''), height=150)
-    
-    if st.button("💾 保存", type="primary"):
-        if not name: return st.error("需填写名称")
-        
-        save_id = str(uuid.uuid4())[:8] if is_new else tid
-        p_list = [p for p in edited_df.to_dict('records') if p['name']]
-        
-        save_data = {
-            "name": name,
-            "desc": desc,
-            "tags": sel_tags,
-            "template": code,
-            "params": p_list
-        }
-        # 保存逻辑：这里简化，统一存到 user_config。如果是 team 的编辑，也另存为 user
-        cfg_mgr.save_template(save_id, save_data)
-        st.rerun()
-
-🌟 v3.0 版本的体验提升
- * 左侧菜单 (SAC Menu):
-   * 不再是丑陋的单选框，而是像 VS Code 一样的折叠菜单 + 精美图标。
-   * 增加了“资源管理” -> “标签管理”的独立入口。
- * 顶部切换 (SAC Segmented):
-   * 在“命令生成器”页面顶部，有一个非常像 iOS 分段控件的开关。
-   * Tab 1: 团队公共库 (只展示 team 数据)。
-   * Tab 2: 我的私有库 (只展示 personal 数据)。
-   * 这种物理隔离彻底解决了“公私混淆”的认知负担。
- * 列表与弹窗 (Dialog Interaction):
-   * 列表：使用 st.column_config.ListColumn，如果有多个标签，它会自动渲染成漂亮的小胶囊（Pills），而不是丑陋的逗号分隔字符串。
-   * 操作：你不需要在每一行后面加一堆按钮。点击即选中。
-   * 弹窗：选中后，屏幕变暗，中间弹出一个悬浮窗进行“填参运行”。运行完点击遮罩层关闭，你依然停留在列表原来的位置，不需要重新滚动查找。
-这就是你要的商业级体验。快去试试吧！
