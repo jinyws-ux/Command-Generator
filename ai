@@ -1,50 +1,39 @@
-收到，这就对了！既然你允许我“推翻重来”，那我们就抛弃那种“上个世纪 Windows 资源管理器”风格的左侧树状菜单。
-现代高效的运维平台（如 Backstage、Portainer、ArgoCD）都不会让用户在密密麻麻的左侧菜单里找脚本。
-我的新设计理念：
- * App Store 风格大厅：像选应用一样选脚本。卡片式布局，一目了然。
- * 聚光灯搜索 (Spotlight)：运维人员的核心需求是“快”。进入系统，直接敲键盘搜索，回车即用。
- * 沉浸式工作台：执行命令时，左边是控制台，右边是拟真的“Terminal 预览”，不再上下堆叠。
- * 极简侧边栏：左侧只保留最核心的“层级”切换（首页 / 设置），把空间留给内容。
-下面是完全重构的 modules/cmd_generator/app.py。请准备好，这会和之前的长得完全不一样。
-🎨 1. 注入灵魂：自定义 CSS (放在 main.py 或模块开头)
-为了好看，我们需要一点点魔法。Streamlit 原生组件间距太大，我们需要用 CSS 把它压紧，并制作“卡片”效果。
-请直接用下面的代码完全覆盖 modules/cmd_generator/app.py：
+非常感谢您的反馈！您提出的两点非常关键：
+ * 右上角菜单消失/导航难用：这是因为我上一版 CSS 隐藏了 stHeader（Streamlit 顶部默认栏），导致您无法访问设置（Settings）或查看运行状态。我必须把这个还原回来，并优化侧边栏的使用体验。
+ * 海量模板的管理难题：当模板从 10 个变成 100 个、1000 个时，单纯的“卡片平铺”确实会变成灾难。我们需要引入**“多维分类”（Type + Category）和“列表/卡片视图切换”**。
+针对您的“大容量管理”需求，我为您重新设计了交互逻辑：
+🛠️ v2.5 改进重点
+ * 双层分类体系：引入 Type (技术栈：Linux/SQL/PowerShell) 和 Category (业务场景：巡检/备份/清理) 两个维度。
+ * 视图切换：增加**“列表模式 (List View)”，像 Excel 一样紧凑展示海量模板；保留“网格模式 (Grid View)”**用于直观查找。
+ * 侧边栏回归：利用 Streamlit 原生侧边栏做全局筛选，它永远停靠在左侧，不会“收回去就找不到”。
+ * UI 修复：恢复右上角原生菜单，优化深色模式配色。
+请直接覆盖 modules/cmd_generator/app.py。
 import streamlit as st
 import pandas as pd
 from jinja2 import Template
 import shlex
 import uuid
 import time
-from datetime import datetime
 
 # ==========================================
-# 🎨 0. 视觉增强 / CSS 魔法
+# 🎨 0. 视觉增强 (修复版)
 # ==========================================
 def inject_custom_css():
     st.markdown("""
         <style>
-        /* 1. 全局字体优化 */
-        .stApp { font-family: 'Inter', system-ui, sans-serif; }
+        /* 全局字体优化 */
+        .stApp { font-family: 'Inter', sans-serif; }
         
-        /* 2. 优化卡片样式 */
-        div[data-testid="stContainer"] {
-            background-color: transparent;
-        }
-        .template-card {
-            background-color: #262730; /* 深色背景 */
-            border: 1px solid #464b5c;
-            border-radius: 8px;
-            padding: 20px;
-            transition: transform 0.2s, border-color 0.2s;
-            height: 100%;
-        }
-        .template-card:hover {
-            border-color: #ff4b4b; /* 悬停高亮色 */
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        /* 修复：不隐藏顶部 Header，方便你找设置 */
+        /* header[data-testid="stHeader"] { visibility: hidden; } */
+        
+        /* 优化 Expander 样式，让分类更清晰 */
+        .streamlit-expanderHeader {
+            background-color: #262730;
+            border-radius: 4px;
         }
         
-        /* 3. 拟真 Terminal 样式 */
+        /* 终端窗口样式 */
         .terminal-window {
             background-color: #1e1e1e;
             border-radius: 6px;
@@ -52,18 +41,13 @@ def inject_custom_css():
             padding: 15px;
             font-family: 'Fira Code', monospace;
             color: #d4d4d4;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            margin-top: 10px;
         }
-        .terminal-header {
-            display: flex;
-            gap: 6px;
-            margin-bottom: 10px;
-        }
-        .dot { width: 10px; height: 10px; border-radius: 50%; }
-        .red { background: #ff5f56; } .yellow { background: #ffbd2e; } .green { background: #27c93f; }
         
-        /* 4. 隐藏 Streamlit 默认的顶栏装饰，更像独立App */
-        header[data-testid="stHeader"] { visibility: hidden; }
+        /* 状态标签样式 */
+        .badge-linux { background-color: #f39c12; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }
+        .badge-sql { background-color: #3498db; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }
+        .badge-ps { background-color: #2ecc71; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -77,233 +61,286 @@ def render(cfg_mgr):
     templates = cfg_mgr.get_all_templates()
     
     # 状态初始化
-    if 'view' not in st.session_state: st.session_state['view'] = 'DASHBOARD' # DASHBOARD | WORKBENCH | EDITOR
+    if 'view_state' not in st.session_state: st.session_state['view_state'] = 'DASHBOARD' 
     if 'active_tid' not in st.session_state: st.session_state['active_tid'] = None
     
-    # --- 顶层极简导航 (面包屑风格) ---
-    render_top_nav()
+    # 路由分发
+    if st.session_state['view_state'] == 'DASHBOARD':
+        render_dashboard(cfg_mgr, templates)
+    elif st.session_state['view_state'] == 'WORKBENCH':
+        render_workbench(cfg_mgr, templates)
+    elif st.session_state['view_state'] == 'EDITOR':
+        render_editor(cfg_mgr, templates)
 
-    # --- 路由分发 ---
-    view = st.session_state['view']
-    
-    if view == 'DASHBOARD':
-        render_dashboard(templates)
+# ==========================================
+# 🏠 2. 大厅 (Dashboard) - 高级筛选与管理
+# ==========================================
+def render_dashboard(cfg_mgr, templates):
+    # --- A. 侧边栏：全局筛选器 (永远可见) ---
+    with st.sidebar:
+        st.header("🗂️ 模板仓库")
         
-    elif view == 'WORKBENCH':
-        tid = st.session_state['active_tid']
-        if tid in templates:
-            render_workbench(cfg_mgr, templates, tid)
-        else:
-            st.session_state['view'] = 'DASHBOARD'
+        # 1. 顶部操作
+        if st.button("➕ 新建模板", type="primary", use_container_width=True):
+            st.session_state['active_tid'] = "NEW"
+            st.session_state['view_state'] = 'EDITOR'
             st.rerun()
             
-    elif view == 'EDITOR':
-        render_editor(cfg_mgr, templates, st.session_state['active_tid'])
+        st.markdown("---")
+        
+        # 2. 核心过滤器
+        filter_search = st.text_input("🔍 搜索", placeholder="关键词...")
+        
+        # 自动提取所有 Type 和 Category
+        all_types = sorted(list(set(t.get('type', 'Other') for t in templates.values())))
+        all_cats = sorted(list(set(t.get('category', '未分类') for t in templates.values())))
+        
+        filter_type = st.multiselect("技术类型 (Type)", options=all_types, default=all_types)
+        filter_cat = st.multiselect("业务场景 (Category)", options=all_cats)
+        
+        st.markdown("---")
+        # 视图切换开关
+        view_mode = st.radio("展示模式", ["🪟 网格卡片", "📋 紧凑列表"], index=0)
 
-# ==========================================
-# 🧭 2. 顶部导航 (Top Nav)
-# ==========================================
-def render_top_nav():
-    # 使用列布局把 Back 按钮和标题分开
-    c1, c2, c3 = st.columns([1, 6, 2])
+    # --- B. 主区域：内容展示 ---
+    st.title("🚀 Ops Command Center")
     
-    with c1:
-        # 如果不是在首页，显示返回按钮
-        if st.session_state['view'] != 'DASHBOARD':
-            if st.button("⬅️ 大厅", use_container_width=True):
-                st.session_state['view'] = 'DASHBOARD'
-                st.session_state['active_tid'] = None
-                st.rerun()
-    
-    with c3:
-        # 只有在 DASHBOARD 才显示新建按钮
-        if st.session_state['view'] == 'DASHBOARD':
-            if st.button("➕ 新建脚本", type="primary", use_container_width=True):
-                st.session_state['active_tid'] = "NEW"
-                st.session_state['view'] = 'EDITOR'
-                st.rerun()
-
-# ==========================================
-# 🏠 3. 仪表盘 (Dashboard) - App Store 风格
-# ==========================================
-def render_dashboard(templates):
-    # --- 1. 聚光灯搜索区 ---
-    st.markdown("<h1 style='text-align: center; margin-bottom: 10px;'>🚀 Ops Command Center</h1>", unsafe_allow_html=True)
-    
-    c_space1, c_search, c_space2 = st.columns([1, 2, 1])
-    with c_search:
-        search_query = st.text_input("Search", placeholder="🔍 搜索脚本名称、数据库、Linux...", label_visibility="collapsed")
-    
-    st.markdown("---")
-
-    # --- 2. 统计概览 (Optional) ---
-    # 可以在这里放 st.metric 显示 "Total Scripts: 15" 等，暂略保证简洁
-
-    # --- 3. 过滤与分类逻辑 ---
+    # 1. 数据过滤逻辑
     filtered_list = []
     for tid, t in templates.items():
         # 搜索过滤
-        if search_query:
-            term = search_query.lower()
-            if term not in t['name'].lower() and term not in t.get('category','').lower():
-                continue
+        term = filter_search.lower()
+        if term and (term not in t['name'].lower() and term not in t.get('desc','').lower()):
+            continue
+        # 类型过滤
+        if t.get('type', 'Other') not in filter_type:
+            continue
+        # 分类过滤 (如果未选则显示所有)
+        if filter_cat and t.get('category', '未分类') not in filter_cat:
+            continue
+            
         t['_id'] = tid
         filtered_list.append(t)
-    
-    # 按分类分组
-    all_cats = sorted(list(set(t.get('category', '未分类') for t in filtered_list)))
-    
+        
     if not filtered_list:
-        st.info("没有找到匹配的脚本模版，试着新建一个？")
+        st.info("没有找到匹配的模板，请调整左侧筛选条件。")
         return
 
-    # --- 4. 卡片网格渲染 ---
-    for cat in all_cats:
-        st.subheader(f"{cat}")
-        cat_items = [t for t in filtered_list if t.get('category') == cat]
-        
-        # 每行显示 3 个卡片
-        cols = st.columns(3)
-        for idx, item in enumerate(cat_items):
-            with cols[idx % 3]:
-                # 渲染单个卡片
-                render_card(item)
-        st.markdown("<br>", unsafe_allow_html=True)
+    st.caption(f"共找到 {len(filtered_list)} 个模板")
 
-def render_card(item):
-    """渲染单个脚本卡片"""
-    is_team = (item.get('source') == 'team')
-    border_color = "#3498db" if is_team else "#2ecc71" # 蓝色代表团队，绿色代表个人
-    icon = "🏢" if is_team else "👤"
+    # 2. 渲染 (根据选择的视图模式)
+    if view_mode == "🪟 网格卡片":
+        render_grid_view(filtered_list)
+    else:
+        render_list_view(filtered_list)
+
+def render_grid_view(items):
+    """网格视图：适合浏览，视觉性强"""
+    # 按 Type 分组展示，避免杂乱
+    grouped_types = sorted(list(set(i.get('type', 'Other') for i in items)))
     
-    # 利用 Container 创建卡片容器
-    with st.container(border=True):
-        c_head, c_badge = st.columns([4, 1])
-        with c_head:
-            st.markdown(f"**{item['name']}**")
-        with c_badge:
-            st.caption(f"{icon}")
-            
-        st.caption(item.get('desc', '无描述')[:40] + "...")
+    for g_type in grouped_types:
+        st.subheader(f"{get_type_icon(g_type)} {g_type}")
+        type_items = [i for i in items if i.get('type', 'Other') == g_type]
         
-        # 底部按钮组
-        b1, b2 = st.columns([3, 1])
-        if b1.button("▶ 运行", key=f"run_{item['_id']}", use_container_width=True):
-            st.session_state['active_tid'] = item['_id']
-            st.session_state['view'] = 'WORKBENCH'
+        cols = st.columns(3)
+        for idx, item in enumerate(type_items):
+            with cols[idx % 3]:
+                with st.container(border=True):
+                    # 标题行
+                    c1, c2 = st.columns([5, 1])
+                    c1.markdown(f"**{item['name']}**")
+                    if item.get('source') == 'team':
+                        c2.caption("🏢")
+                    else:
+                        c2.caption("👤")
+                    
+                    st.caption(f"📂 {item.get('category', '未分类')}")
+                    st.text(item.get('desc', '无描述')[:30] + "...")
+                    
+                    if st.button("运行", key=f"grid_run_{item['_id']}", use_container_width=True):
+                        st.session_state['active_tid'] = item['_id']
+                        st.session_state['view_state'] = 'WORKBENCH'
+                        st.rerun()
+                        
+                    if st.button("编辑", key=f"grid_edit_{item['_id']}", use_container_width=True):
+                        st.session_state['active_tid'] = item['_id']
+                        st.session_state['view_state'] = 'EDITOR'
+                        st.rerun()
+
+def render_list_view(items):
+    """列表视图：适合管理大量数据"""
+    # 使用 DataFrame 展示，非常整洁
+    # 构造表格数据
+    table_data = []
+    for item in items:
+        table_data.append({
+            "ID": item['_id'],
+            "名称": item['name'],
+            "类型": item.get('type', 'Other'),
+            "分类": item.get('category', '未分类'),
+            "来源": "🏢 团队" if item.get('source') == 'team' else "👤 个人",
+            "描述": item.get('desc', '')
+        })
+    
+    df = pd.DataFrame(table_data)
+    
+    # 使用 Dataframe 的选中事件 (Streamlit 新特性)
+    st.markdown("##### 💡 提示：勾选左侧复选框来选择操作")
+    event = st.dataframe(
+        df,
+        column_config={
+            "ID": None, # 隐藏ID列
+            "名称": st.column_config.TextColumn("模板名称", width="medium"),
+            "类型": st.column_config.TextColumn("类型", width="small"),
+            "来源": st.column_config.TextColumn("来源", width="small"),
+        },
+        on_select="rerun", # 选中后自动刷新
+        selection_mode="single-row",
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # 处理选中逻辑
+    if len(event.selection.rows) > 0:
+        selected_idx = event.selection.rows[0]
+        selected_id = df.iloc[selected_idx]['ID']
+        
+        # 底部弹出操作栏
+        st.info(f"已选中: **{df.iloc[selected_idx]['名称']}**")
+        c1, c2, c3 = st.columns([1, 1, 4])
+        if c1.button("▶ 立即运行", type="primary", use_container_width=True):
+            st.session_state['active_tid'] = selected_id
+            st.session_state['view_state'] = 'WORKBENCH'
             st.rerun()
-            
-        if b2.button("⚙️", key=f"edit_{item['_id']}", help="设置/编辑"):
-            st.session_state['active_tid'] = item['_id']
-            st.session_state['view'] = 'EDITOR'
+        if c2.button("✏️ 编辑/详情", use_container_width=True):
+            st.session_state['active_tid'] = selected_id
+            st.session_state['view_state'] = 'EDITOR'
             st.rerun()
 
 # ==========================================
-# 🛠️ 4. 沉浸式工作台 (Workbench) - 左右分栏
+# 🛠️ 3. 工作台 (Workbench)
 # ==========================================
-def render_workbench(cfg_mgr, templates, tid):
+def render_workbench(cfg_mgr, templates, tid=None):
+    if not tid: tid = st.session_state.get('active_tid')
+    if not tid or tid not in templates:
+        st.error("模板未找到")
+        if st.button("返回"):
+            st.session_state['view_state'] = 'DASHBOARD'
+            st.rerun()
+        return
+
     data = templates[tid]
     
-    # 标题区
-    st.caption(f"{data.get('category')} / {data.get('name')}")
-    st.title(data.get('name'))
+    # 顶部导航条
+    c_back, c_title = st.columns([1, 8])
+    if c_back.button("⬅️", help="返回列表"):
+        st.session_state['view_state'] = 'DASHBOARD'
+        st.rerun()
     
-    # --- 左右分栏布局 ---
-    # 左边是参数控制台，右边是拟真 Terminal 预览
-    col_input, col_preview = st.columns([1, 1.2], gap="large")
+    with c_title:
+        st.subheader(f"{get_type_icon(data.get('type'))} {data['name']}")
+
+    st.markdown("---")
+
+    # 左右布局
+    col_input, col_output = st.columns([1, 1.2], gap="large")
     
-    user_inputs = {}
-    
-    # === 左侧：控制台 ===
     with col_input:
-        st.subheader("参数配置")
-        with st.form(key="run_form"):
+        st.caption("Step 1: 参数配置")
+        with st.form("run_form"):
+            user_inputs = {}
             params = data.get('params', [])
+            
             if not params:
-                st.info("此脚本无需参数")
-                
+                st.info("无需参数")
+            
             for p in params:
                 label = p.get('label', p['name'])
-                key = p['name']
-                
                 if p['type'] == 'select':
                     opts = [x.strip() for x in p.get("options", "").split(",") if x.strip()]
-                    user_inputs[key] = st.selectbox(label, options=opts)
+                    user_inputs[p['name']] = st.selectbox(label, options=opts)
                 elif p['type'] == 'number':
-                    user_inputs[key] = st.number_input(label, value=float(p.get('default', 0)))
+                    user_inputs[p['name']] = st.number_input(label, value=float(p.get('default', 0)))
                 else:
-                    user_inputs[key] = st.text_input(label, value=str(p.get('default', '')))
+                    user_inputs[p['name']] = st.text_input(label, value=str(p.get('default', '')))
             
             st.markdown("<br>", unsafe_allow_html=True)
             submitted = st.form_submit_button("⚡ 生成命令", type="primary", use_container_width=True)
 
-    # === 右侧：拟真 Terminal ===
-    with col_preview:
-        st.subheader("Terminal Preview")
-        
-        # 默认显示占位符
-        result_content = "# 等待生成..."
-        
+    with col_output:
+        st.caption("Step 2: 结果预览")
+        result_text = "# 等待生成..."
         if submitted:
             try:
                 safe_inputs = {k: (shlex.quote(str(v)) if isinstance(v, str) else v) for k, v in user_inputs.items()}
                 t = Template(data.get("template", ""))
-                result_content = t.render(**safe_inputs)
+                result_text = t.render(**safe_inputs)
             except Exception as e:
-                result_content = f"# Error:\n{str(e)}"
+                result_text = f"# Error: {e}"
         
-        # HTML 渲染拟真终端
         st.markdown(f"""
         <div class="terminal-window">
-            <div class="terminal-header">
-                <div class="dot red"></div>
-                <div class="dot yellow"></div>
-                <div class="dot green"></div>
-            </div>
-            <div style="white-space: pre-wrap; word-break: break-all;">{result_content}</div>
+            <div style="color:#2ecc71; margin-bottom:5px;">user@ops-console:~$ generate</div>
+            <div style="white-space: pre-wrap; word-break: break-all;">{result_text}</div>
         </div>
         """, unsafe_allow_html=True)
         
         if submitted:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.code(result_content, language="bash") # 为了方便复制，还是保留一个原生code块
-            st.caption("Tip: 点击右上角复制按钮")
+            st.code(result_text)
 
 # ==========================================
-# 📝 5. 编辑器 (Editor) - 抽屉式
+# 📝 4. 编辑器 (Editor)
 # ==========================================
-def render_editor(cfg_mgr, templates, tid):
+def render_editor(cfg_mgr, templates):
+    tid = st.session_state.get('active_tid')
     is_new = (tid == "NEW")
     data = {} if is_new else templates.get(tid, {})
     
-    st.subheader("🛠️ 脚本编辑器")
+    # 顶部导航
+    c_back, c_title = st.columns([1, 8])
+    if c_back.button("⬅️ 取消"):
+        st.session_state['view_state'] = 'DASHBOARD'
+        st.rerun()
+    with c_title:
+        st.subheader("新建模板" if is_new else "编辑模板")
     
-    # 团队模版只读提示
-    if not is_new and data.get('source') == 'team':
-        st.warning("您正在编辑一个【团队共享模版】。保存后将自动另存为您的【个人模版】。")
+    st.markdown("---")
 
     with st.container(border=True):
-        # 第一行：名称与分类
-        c1, c2 = st.columns([2, 1])
-        new_name = c1.text_input("脚本名称", value=data.get('name', ''))
+        # 第一行：核心元数据
+        c1, c2, c3 = st.columns([2, 1, 1])
+        new_name = c1.text_input("名称", value=data.get('name', ''))
         
-        # 分类处理
-        existing_cats = sorted(list(set(t['category'] for t in templates.values())))
-        if "默认" not in existing_cats: existing_cats.append("默认")
-        curr_cat = data.get('category', '默认')
-        cat_mode = c2.selectbox("分类", options=existing_cats + ["+ 新建..."], index=0 if curr_cat not in existing_cats else existing_cats.index(curr_cat))
+        # 1. Type 选择 (支持自定义)
+        types_common = ["Linux", "SQL", "PowerShell", "Docker", "K8s"]
+        curr_type = data.get('type', 'Linux')
+        new_type = c2.selectbox("类型 (Type)", options=types_common + ["自定义..."], index=0 if curr_type not in types_common else types_common.index(curr_type))
+        if new_type == "自定义...":
+            new_type = c2.text_input("输入新类型", value="Other")
+
+        # 2. Category 选择 (支持自定义)
+        # 获取现有所有分类，方便复用
+        existing_cats = sorted(list(set(t.get('category') for t in templates.values() if t.get('category'))))
+        curr_cat = data.get('category', 'Default')
+        cat_opts = existing_cats + ["+ 新建分类..."]
         
-        final_cat = cat_mode
-        if cat_mode == "+ 新建...":
-            final_cat = c2.text_input("输入分类名")
+        # 尽量匹配当前索引
+        cat_idx = 0
+        if curr_cat in existing_cats:
+            cat_idx = existing_cats.index(curr_cat)
             
+        new_cat_sel = c3.selectbox("业务场景 (Category)", options=cat_opts, index=cat_idx)
+        final_cat = new_cat_sel
+        if new_cat_sel == "+ 新建分类...":
+            final_cat = c3.text_input("输入分类名", placeholder="例如: 数据库巡检")
+
         new_desc = st.text_input("描述", value=data.get('desc', ''))
-        
+
         # 参数配置
-        st.markdown("---")
-        st.caption("参数定义 (Table)")
-        default_params = data.get('params', [{"name": "target", "label": "目标IP", "type": "text", "default": "", "options": ""}])
-        
+        st.markdown("#### 参数定义")
+        default_params = data.get('params', [{"name": "target", "label": "目标", "type": "text", "default": "", "options": ""}])
         edited_df = st.data_editor(
             pd.DataFrame(default_params),
             num_rows="dynamic",
@@ -312,55 +349,64 @@ def render_editor(cfg_mgr, templates, tid):
                 "type": st.column_config.SelectboxColumn("类型", options=["text", "number", "select"])
             }
         )
+
+        # 模板内容
+        st.markdown("#### 模板代码")
+        new_code = st.text_area("Jinja2 Code", value=data.get('template', ''), height=200)
         
-        # 模板代码
-        st.caption("命令模板 (Jinja2)")
-        new_code = st.text_area("Code", value=data.get('template', ''), height=200)
-        
-        # 底部操作栏
+        # 保存区
         st.markdown("---")
-        b_save, b_space, b_del = st.columns([1, 4, 1])
+        b1, b2, b3 = st.columns([1, 4, 1])
         
-        if b_save.button("💾 保存脚本", type="primary", use_container_width=True):
-            if not new_name:
-                st.error("起个名字吧")
-                return
+        if b1.button("💾 保存", type="primary", use_container_width=True):
+            if not new_name: return st.error("请填写名称")
             
-            save_id = str(uuid.uuid4())[:8] if (is_new or data.get('source')=='team') else tid
+            # 逻辑：如果是团队模版，保存时强制生成新ID（另存为）
+            save_id = tid
+            if is_new or data.get('source') == 'team':
+                save_id = str(uuid.uuid4())[:8]
             
+            # 序列化
             p_list = [p for p in edited_df.to_dict('records') if p['name']]
             
             save_data = {
                 "name": new_name,
+                "type": new_type if new_type != "自定义..." else "Other", # 核心修正
+                "category": final_cat if final_cat else "Default",
                 "desc": new_desc,
-                "category": final_cat if final_cat else "默认",
                 "template": new_code,
                 "params": p_list
             }
+            
             cfg_mgr.save_template(save_id, save_data)
-            st.success("保存成功")
-            st.session_state['active_tid'] = None
-            st.session_state['view'] = 'DASHBOARD'
+            st.success("已保存")
+            st.session_state['view_state'] = 'DASHBOARD'
             st.rerun()
             
         if not is_new and data.get('source') == 'personal':
-            if b_del.button("🗑️ 删除", use_container_width=True):
+            if b3.button("🗑️ 删除", use_container_width=True):
                 cfg_mgr.delete_template(tid)
-                st.session_state['active_tid'] = None
-                st.session_state['view'] = 'DASHBOARD'
+                st.session_state['view_state'] = 'DASHBOARD'
                 st.rerun()
 
+# 辅助函数
+def get_type_icon(t):
+    if t == 'Linux': return '🐧'
+    if t == 'SQL': return '🐬'
+    if t == 'PowerShell': return '🪟'
+    if t == 'Docker': return '🐳'
+    return '📝'
 
-🌟 重新设计的亮点
- * Dashboard (仪表盘模式)：
-   * 现在的首页不再是一个列表，而是一组卡片。
-   * 就像 iPhone 的 App Library，你可以一眼看到所有的工具。
-   * 搜索框变得非常大且居中，强调“搜索即用”。
- * Workbench (工作台模式)：
-   * 当你点击一个卡片后，界面完全切换（不再是挤在侧边栏）。
-   * 左侧填参，右侧预览：这是一个经典的 IDE 布局。
-   * 右侧我手写了一个 HTML/CSS 的 terminal-window，看起来像一个黑底的真实终端窗口，带有红黄绿三个小圆点，科技感拉满。
- * 交互逻辑：
-   * 面包屑导航：左上角有一个 ⬅️ 大厅 按钮，让你随时能退回到卡片列表。
-   * 去掉了中间栏：之前的三栏布局对于小屏幕或者参数多的脚本来说太挤了。现在的全屏两栏布局（输入+输出）对用户最友好。
-这个版本彻底抛弃了“文件树”，转向了“应用商店 + 沉浸式工作台”的现代 SaaS 设计。快去运行 streamlit run main.py，看看这次是不是够 Bold！
+💡 这次改动的核心优势
+ * 左侧侧边栏做“全局筛选”：
+   * 之前你担心导航栏“收回去就没了”。现在侧边栏用于放置**Type（技术栈）和Category（业务分类）**的筛选器。Streamlit 的侧边栏是可以点击右上角 > 永久展开或折叠的，而且折叠后点击 > 随时能唤出，非常符合用户习惯。
+ * 列表视图 (List View)：
+   * 这是专门为了“成百上千个模板”设计的。
+   * 在侧边栏选择 “📋 紧凑列表”，右侧会变成一个 Excel 风格的表格。
+   * 你可以一屏看到 20-30 个脚本，支持点击表头排序，支持勾选行进行操作。这比卡片视图效率高得多。
+ * 多维度分类 (Type + Category)：
+   * 以前只有 Category。现在我在编辑器里加了 Type (Linux/SQL/PowerShell...)。
+   * 网格视图会自动按照 Type 进行分组（Subheader），比如“Linux 命令”一组，“SQL 命令”一组，清晰度大幅提升。
+ * 右上角原生功能回归：
+   * 我去掉了 header { visibility: hidden }。现在你可以看到右上角的“Running”状态、汉堡菜单（Settings），方便你调试或切换主题。
+快试试这个版本，看看“列表模式”和“侧边栏筛选”是否解决了你关于大量模板管理的担忧！
