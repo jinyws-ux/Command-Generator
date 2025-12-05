@@ -1,0 +1,267 @@
+太棒了，我们终于来到了决战时刻！
+这是整个项目的核心灵魂：🚀 命令控制台 (Command Hub)。
+我们要在这里把前面做的所有东西（Tag、模板、数据）串联起来，实现一个谷歌搜索式的极速体验，并且加上你要的**“命令时光机”**功能。
+第一步：编写核心控制台代码
+文件路径：views/dashboard.py
+操作：在 views 文件夹里新建 dashboard.py，粘贴以下代码。
+💡 代码亮点预览：
+ * 智能筛选：不再是丑陋的多选框，而是用类似 App Store 的分类芯片（Chips）。
+ * 卡片网格：自动计算排版，每行 3 个卡片。
+ * 时光机：右侧栏实时记录你刚刚生成的命令，关掉弹窗也能找回。
+<!-- end list -->
+# views/dashboard.py
+import streamlit as st
+import streamlit_antd_components as sac
+import pandas as pd
+from jinja2 import Template
+import shlex
+import time
+from core.config_manager import ConfigManager
+from core.tag_manager import TagManager
+
+# 简单的内存级历史记录 (刷新页面会重置，适合临时使用)
+if "history_log" not in st.session_state:
+    st.session_state["history_log"] = []
+
+def render_dashboard():
+    cfg_mgr = ConfigManager()
+    tag_mgr = TagManager()
+    
+    # 获取所有数据
+    all_templates = cfg_mgr.get_all_templates()
+    all_tags = tag_mgr.get_all_tags()
+    categories = ["All"] + tag_mgr.get_categories()
+
+    # ==========================
+    # 1. 顶部：搜索与状态栏
+    # ==========================
+    col_search, col_source = st.columns([4, 1])
+    with col_search:
+        # 超大搜索框
+        search_kw = st.text_input("🔍 Search", placeholder="搜索命令名称、描述或标签...", label_visibility="collapsed")
+    with col_source:
+        # 来源切换
+        source_filter = sac.segmented(
+            items=[sac.SegmentedItem(label='Team'), sac.SegmentedItem(label='Personal')],
+            size='sm', align='end', color='indigo'
+        )
+    
+    current_source = 'team' if source_filter == 'Team' else 'personal'
+
+    # ==========================
+    # 2. 高级筛选区 (Chip Filters)
+    # ==========================
+    # 这是一个很现代的交互：点击分类，自动过滤
+    selected_cat = sac.chip(
+        items=[sac.ChipItem(label=c) for c in categories],
+        index=0, align='start', radius='md', color='indigo'
+    )
+
+    st.markdown("---")
+
+    # ==========================
+    # 3. 核心布局：左侧主控台 vs 右侧时光机
+    # ==========================
+    layout_main, layout_history = st.columns([3, 1])
+
+    # === 左侧：卡片网格 ===
+    with layout_main:
+        # --- 过滤逻辑 ---
+        filtered_items = []
+        for tid, t in all_templates.items():
+            # 1. 来源过滤
+            if t.get('source', 'team') != current_source: continue
+            
+            # 2. 搜索关键词过滤 (搜名字、描述)
+            if search_kw:
+                kw = search_kw.lower()
+                if kw not in t['name'].lower() and kw not in t.get('desc','').lower():
+                    continue
+            
+            # 3. 分类过滤 (比较复杂，需要看这个模板的Tag属于哪个分类)
+            if selected_cat != "All":
+                # 找出这个模板所有的Tag
+                t_tags = t.get('tags', []) # 存的是ID列表
+                # 找出这些Tag对应的分类
+                t_cats = [all_tags.get(tag_id, {}).get('category') for tag_id in t_tags]
+                # 如果当前选的分类不在这个模板的分类列表里，就跳过
+                if selected_cat not in t_cats:
+                    continue
+
+            # 组装用于显示的数据
+            # 预处理 Tags 用于渲染
+            display_tags = []
+            for tag_id in t.get('tags', []):
+                if tag_id in all_tags:
+                    display_tags.append(all_tags[tag_id])
+
+            filtered_items.append({
+                "id": tid, "data": t, "display_tags": display_tags
+            })
+
+        # --- 渲染卡片 ---
+        if not filtered_items:
+            st.info(f"📭 没有找到 {current_source} 来源下的相关命令")
+        else:
+            st.caption(f"Showing {len(filtered_items)} commands")
+            
+            # Grid 布局：每行3个
+            cols = st.columns(3)
+            for idx, item in enumerate(filtered_items):
+                with cols[idx % 3]:
+                    render_card(item, cfg_mgr)
+
+    # === 右侧：命令时光机 ===
+    with layout_history:
+        st.markdown("#### ⏳ 时光机")
+        st.caption("Session History")
+        
+        if not st.session_state["history_log"]:
+            st.markdown("*暂无生成记录*")
+            st.markdown("*运行几个命令试试！*")
+        else:
+            for h in reversed(st.session_state["history_log"][-10:]): # 只显示最近10条
+                with st.container(border=True):
+                    st.caption(f"🕒 {h['time']}")
+                    st.code(h['cmd'], language="bash")
+                    # 再次复制按钮 (为了简洁，这里只展示)
+
+# --- 组件：单个卡片渲染逻辑 ---
+def render_card(item, cfg_mgr):
+    data = item['data']
+    tid = item['id']
+    
+    # 这种 HTML 写法是为了配合 CSS 实现卡片效果
+    with st.container():
+        st.markdown(f"""
+        <div class="cmd-card">
+            <div style="height: 40px; font-weight: bold; font-size: 1.1em;">{data['name']}</div>
+            <div style="height: 40px; font-size: 0.8em; color: #666; overflow: hidden; margin-bottom: 10px;">
+                {data.get('desc', 'No description')[:50]}...
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 渲染 Tag Chips
+        if item['display_tags']:
+            sac.tags([
+                sac.Tag(label=t['name'], color=t['color'], bordered=False) 
+                for t in item['display_tags'][:3] # 最多显示3个防止撑爆
+            ], size='xs', align='start')
+        else:
+            st.write("") # 占位
+            
+        # 按钮组
+        c_run, c_edit = st.columns([3, 1])
+        if c_run.button("🚀 运行", key=f"run_{tid}", use_container_width=True):
+            open_runner(data)
+            
+        if c_edit.button("✏️", key=f"edit_{tid}", help="编辑此模板"):
+            # 核心逻辑：设置 Session 状态，然后提示用户切换
+            st.session_state["edit_target_id"] = tid
+            st.toast("已载入编辑器，请点击左侧菜单的【编辑器】进行修改", icon="📝")
+            time.sleep(0.5)
+
+# --- 弹窗：运行器 (The Runner) ---
+@st.dialog("🚀 配置参数并生成", width="large")
+def open_runner(data):
+    st.caption(data.get('desc', ''))
+    
+    # 动态构建表单
+    params = data.get('params', [])
+    inputs = {}
+    
+    # 使用两列布局让表单更紧凑
+    form_cols = st.columns(2)
+    
+    for idx, p in enumerate(params):
+        col = form_cols[idx % 2] # 奇偶分列
+        label = f"{p['label']} ({p['name']})" if p.get('label') else p['name']
+        
+        with col:
+            if p['type'] == 'select':
+                opts = [x.strip() for x in p.get("options","").split(",") if x.strip()]
+                inputs[p['name']] = st.selectbox(label, opts)
+            else:
+                inputs[p['name']] = st.text_input(label, value=p.get('default',''))
+
+    st.markdown("---")
+    
+    if st.button("Generate Command", type="primary", use_container_width=True):
+        try:
+            # 1. 安全处理 (shlex) 防止命令注入风险
+            safe_context = {
+                k: (shlex.quote(str(v)) if isinstance(v, str) else v) 
+                for k, v in inputs.items()
+            }
+            
+            # 2. 渲染
+            t = Template(data.get('template',''))
+            result_cmd = t.render(**safe_context)
+            
+            # 3. 展示结果
+            st.success("生成成功！")
+            st.code(result_cmd, language="bash")
+            
+            # 4. 写入历史记录 (时光机)
+            st.session_state["history_log"].append({
+                "time": time.strftime("%H:%M:%S"),
+                "cmd": result_cmd
+            })
+            
+            # 5. 提示
+            st.caption("💡 提示：点击代码块右上角可直接复制")
+            
+        except Exception as e:
+            st.error(f"渲染错误: {str(e)}")
+
+
+第二步：最后一次连接主程序
+我们已经完成了所有视图。现在去 app.py 把最后一块拼图补上。
+操作：打开 app.py，找到 if menu == '控制台': 这一段，替换为：
+# app.py 中需要修改的部分
+
+# ... (前面代码不变)
+
+# --- 主界面路由逻辑 ---
+if menu == '控制台':
+    from views.dashboard import render_dashboard
+    render_dashboard()
+
+elif menu == '标签工坊':
+# ... (后面代码不变)
+
+🎉 恭喜！项目构建完成！
+现在，你拥有了一个完整、模块化、具备高级感的命令生成器。
+请执行最终测试：
+ * 启动程序：streamlit run app.py
+ * 新建流程：
+   * 去【标签工坊】建一个叫 "Production" 的红色 Tag。
+   * 去【编辑器】新建一个命令，比如 Check Disk，关联这个 Tag，写个模板 df -h {{ path }}。
+   * 保存。
+ * 使用流程：
+   * 回到【控制台】。
+   * 你应该能看到刚才的 Check Disk 卡片。
+   * 点击上面的 "Production" 芯片，应该能筛选出它。
+   * 点击 “🚀 运行”。
+   * 在弹窗里输入 /var/log，点击生成。
+   * 见证奇迹：代码出来了，而且右侧的【时光机】里也出现了这条记录。
+ * 修改流程：
+   * 点击卡片上的小铅笔 ✏️。
+   * 根据 Toast 提示，点击左侧菜单的【编辑器】。
+   * 你会发现刚才的命令已经自动加载进去了，可以直接修改。
+这就完了吗？
+不，我为你准备了一个彩蛋。
+如果你想让界面更酷一点，可以去 assets/style.css 的最后，加上这几行代码，给按钮加个渐变色：
+/* 给主要按钮加渐变色 */
+button[kind="primary"] {
+    background: linear-gradient(90deg, #4D96FF 0%, #6BCB77 100%) !important;
+    border: none !important;
+    transition: all 0.3s ease !important;
+}
+button[kind="primary"]:hover {
+    opacity: 0.9;
+    transform: scale(1.02);
+}
+
+现在，这个项目是你的了。尽情使用吧！如果在部署或者使用中遇到任何报错，随时把错误信息丢给我，我秒修。
