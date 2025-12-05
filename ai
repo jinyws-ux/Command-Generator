@@ -1,25 +1,24 @@
-收到，我完全明白了。既然您给了我“设计权”，那我就不再畏手畏脚。
-这一次，我们打破 Streamlit 的常规布局，完全按照现代 B 端产品（如飞书/钉钉后台、Grafana）的标准来做。
-🎨 V8.0 最终重构版设计说明
- * 拒绝“土味”布局：
-   * 通栏式头部：抛弃 Streamlit 默认的标题堆叠，重写顶部区域，让筛选器和操作栏融为一体。
-   * Master-Detail 布局：标签管理页不再是“上下结构”，而是标准的“左侧导航树 + 右侧工作台”，这是管理复杂数据的唯一正解。
- * Grafana 级标签系统：
-   * 逻辑：“定维度，即定颜色”。你设定 Environment 是绿色，那么 Prod, Dev 自动变绿。不用给每个标签单独选色。
-   * 样式：胶囊式显示 [ 维度 | 值 ]。
- * 原生 Dark Mode 完美适配：
-   * 移除了所有强制背景色的 CSS，利用 Streamlit 原生 Border 组件来构建层次感。黑夜模式下自动变为深灰卡片。
- * 逻辑修正：
-   * 筛选改为 AND (交集) 逻辑。
-请清空项目（保留 requirements.txt），直接创建以下 4 个文件。
-📄 1. core/config_manager.py
-(稳健的绝对路径 + 强制 Source 标记)
+这次我完全明白了。你要的不是一个“能用的脚本”，而是一个**“逻辑自洽、交互流畅、视觉规范”的产品**。
+我参考了 Linear（配置逻辑） 和 Grafana（展示逻辑），对代码进行了V10 最终版重构。
+💎 V10 商业化重构核心点
+ * Master-Detail 沉浸式管理：
+   * 标签管理不再是填表单。左侧是维度导航树，右侧是高密度工作台。
+   * 继承式色系：你只需给“维度（分类）”定色（如 DB=蓝色），该维度下所有标签自动继承蓝色。这是管理海量标签的唯一正解。
+ * 高密度 HUD 布局：
+   * 命令生成器顶部采用 HUD (Head-Up Display) 通栏设计，将搜索、筛选（分组显示）、视图切换整合在一行，极大释放屏幕空间。
+ * 原生 Dark Mode 完美支持：
+   * 移除了所有强制背景色的 CSS Hack。利用 st.container(border=True) 的原生特性，在亮色模式下是干净的卡片，在暗色模式下自动变为深邃的灰黑面板。
+ * AND 逻辑筛选：
+   * 选中 Linux 和 HighRisk，系统只筛选同时满足这两个条件的模板。
+请清空项目（只保留 requirements.txt），直接创建以下 4 个文件。
+📂 1. core/config_manager.py
+(负责数据的绝对路径存取、双库隔离)
 import json
 import os
 
 class ConfigManager:
     def __init__(self, team_path: str, user_path: str):
-        # 强制绝对路径，解决IDE运行路径不一致问题
+        # 强制绝对路径，防止 IDE 运行目录差异导致文件丢失
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.team_path = os.path.join(base_dir, team_path)
         self.user_path = os.path.join(base_dir, user_path)
@@ -34,14 +33,14 @@ class ConfigManager:
                     json.dump({}, f)
             except: pass
 
-    def _load_json(self, path):
+    def _load(self, path):
         if not os.path.exists(path): return {}
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except: return {}
 
-    def _save_json(self, path, data):
+    def _save(self, path, data):
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
@@ -49,26 +48,25 @@ class ConfigManager:
 
     def get_all_templates(self):
         merged = {}
-        # Load Team
-        for k, v in self._load_json(self.team_path).items():
+        # Team
+        for k, v in self._load(self.team_path).items():
             if isinstance(v, dict):
                 v['id'] = k
                 v['source'] = 'team'
-                if 'tags' not in v: v['tags'] = []
+                v['tags'] = v.get('tags', [])
                 merged[k] = v
-        # Load User
-        for k, v in self._load_json(self.user_path).items():
+        # Personal
+        for k, v in self._load(self.user_path).items():
             if isinstance(v, dict):
                 v['id'] = k
                 v['source'] = 'personal'
-                if 'tags' not in v: v['tags'] = []
+                v['tags'] = v.get('tags', [])
                 merged[k] = v
         return merged
 
     def save_template(self, tid, data, target_source):
         path = self.team_path if target_source == 'team' else self.user_path
-        curr = self._load_json(path)
-        
+        curr = self._load(path)
         curr[tid] = {
             "name": data.get("name"),
             "desc": data.get("desc", ""),
@@ -77,10 +75,10 @@ class ConfigManager:
             "params": data.get("params", []),
             "updated_at": "now"
         }
-        self._save_json(path, curr)
+        self._save(path, curr)
 
-📄 2. core/tag_manager.py
-(支持 Metadata 分离：分类存颜色，标签存引用)
+📂 2. core/tag_manager.py
+(标签内核：分离元数据与实例数据)
 import json
 import os
 
@@ -88,9 +86,8 @@ class TagManager:
     def __init__(self, tag_file="tags.json"):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.file_path = os.path.join(base_dir, tag_file)
-        
-        # 初始化数据结构：meta 存分类颜色，data 存具体标签
         if not os.path.exists(self.file_path):
+            # meta: 存分类颜色 | data: 存标签值
             with open(self.file_path, 'w', encoding='utf-8') as f:
                 json.dump({"meta": {}, "data": {}}, f)
 
@@ -98,7 +95,7 @@ class TagManager:
         try:
             with open(self.file_path, 'r', encoding='utf-8') as f:
                 c = json.load(f)
-                return c if "meta" in c else {"meta": {}, "data": c}
+                return c if "meta" in c else {"meta": {}, "data": {}}
         except: return {"meta": {}, "data": {}}
 
     def _save(self, content):
@@ -119,14 +116,14 @@ class TagManager:
     def delete_category(self, cat):
         c = self._read()
         if cat in c["meta"]: del c["meta"][cat]
-        # 级联清理标签
+        # 级联删除该分类下的所有标签
         c["data"] = {k:v for k,v in c["data"].items() if v.get('category') != cat}
         self._save(c)
 
     def save_tag(self, tid, name, cat):
         c = self._read()
         c["data"][tid] = {"name": name, "category": cat}
-        # 如果分类没有颜色，给个默认灰
+        # 如果Meta里没有这个分类，补一个默认色
         if cat not in c["meta"]: c["meta"][cat] = "#8c8c8c"
         self._save(c)
 
@@ -135,8 +132,8 @@ class TagManager:
         if tid in c["data"]: del c["data"][tid]
         self._save(c)
 
-📄 3. main.py
-(入口 + 标签管理系统 UI 重构)
+📂 3. main.py
+(入口：包含 Master-Detail 标签管理器)
 import streamlit as st
 import streamlit_antd_components as sac
 from core.config_manager import ConfigManager
@@ -146,23 +143,21 @@ import pandas as pd
 import uuid
 
 # ==========================================
-# 🎨 全局 CSS (无侵入式，适配 Dark Mode)
+# 🎨 商业级配色与全局设置
 # ==========================================
 st.set_page_config(layout="wide", page_title="Ops Console", page_icon="⚡")
 
+# 移除侵入性 CSS，仅做微调优化屏效
 st.markdown("""
 <style>
-    /* 字体优化 */
-    .stApp { font-family: 'Inter', system-ui, sans-serif; }
-    
-    /* 侧边栏样式微调 */
-    [data-testid="stSidebar"] { border-right: 1px solid rgba(128, 128, 128, 0.2); }
-    
-    /* 压缩顶部留白，增加屏效 */
-    .block-container { padding-top: 1.5rem; }
-    
-    /* 表格样式：去圆角，增加专业感 */
+    .stApp { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .block-container { padding-top: 1.5rem; padding-bottom: 3rem; }
+    /* 侧边栏微调 */
+    [data-testid="stSidebar"] { border-right: 1px solid rgba(128, 128, 128, 0.1); }
+    /* 表格去圆角 */
     [data-testid="stDataFrame"] { border-radius: 4px; }
+    /* 隐藏 Streamlit 默认汉堡菜单 */
+    #MainMenu {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -172,109 +167,111 @@ def main():
 
     with st.sidebar:
         st.subheader("⚡ Ops Platform")
-        
-        # 极简导航
+        # 纯 Label 模式，兼容所有版本
         menu = sac.menu([
             sac.MenuItem('工作台', icon='box', children=[
                 sac.MenuItem('命令生成器', icon='terminal'),
             ]),
             sac.MenuItem(type='divider'),
             sac.MenuItem('系统配置', icon='settings', children=[
-                sac.MenuItem('标签管理', icon='tag'),
+                sac.MenuItem('标签体系', icon='tags'),
             ]),
         ], color='indigo', open_all=True)
 
     if menu == '命令生成器':
         cmd_app.render(cfg_mgr, tag_mgr)
-        
-    elif menu == '标签管理':
+    elif menu == '标签体系':
         render_tag_system(tag_mgr)
-        
     else:
-        st.empty() # 默认不显示多余信息
+        st.empty()
 
 # ==========================================
-# 🏷️ 标签管理系统 (v8.0 Master-Detail 布局)
+# 🏷️ 标签体系 (Master-Detail 布局)
 # ==========================================
 def render_tag_system(tag_mgr):
-    st.title("标签体系配置")
-    st.caption("定义全平台的分类维度与颜色，并管理具体标签值。")
+    st.title("标签体系管理")
+    st.caption("分类定义颜色，标签继承属性。")
 
     all_tags = tag_mgr.get_all_tags()
     meta_cats = tag_mgr.get_categories_meta()
     
-    # 初始化默认分类
+    # 默认分类初始化
     if not meta_cats:
         meta_cats = {"General": "#64748b"}
         tag_mgr.save_category_meta("General", "#64748b")
         st.rerun()
 
-    # === 左右布局：左侧维度树 | 右侧标签池 ===
+    # === 左右布局 ===
     c_nav, c_main = st.columns([1, 3], gap="medium")
 
-    # --- 左侧：分类维度管理 ---
+    # --- 左侧：维度导航 ---
     with c_nav:
-        st.markdown("##### 📂 分类维度")
+        st.markdown("##### 📂 维度分类")
         
-        # 1. 分类列表 (Radio 模拟导航)
+        # 1. 分类列表 (Radio 模拟 ListGroup)
         cat_list = sorted(list(meta_cats.keys()))
+        # 状态保持
+        if 'sel_cat' not in st.session_state: st.session_state['sel_cat'] = cat_list[0]
+        if st.session_state['sel_cat'] not in cat_list: st.session_state['sel_cat'] = cat_list[0]
+        
         selected_cat = st.radio("选择分类", cat_list, label_visibility="collapsed")
+        st.session_state['sel_cat'] = selected_cat
         
         st.divider()
         
         # 2. 颜色绑定 (核心功能)
         st.markdown(f"**{selected_cat}** 主题色")
         curr_color = meta_cats.get(selected_cat, "#64748b")
-        new_color = st.color_picker("Color", value=curr_color, label_visibility="collapsed")
+        new_color = st.color_picker("Pick Color", value=curr_color)
         
         if new_color != curr_color:
             tag_mgr.save_category_meta(selected_cat, new_color)
-            st.toast("颜色已更新", icon="🎨")
+            st.toast("颜色更新成功", icon="🎨")
             st.rerun()
 
-        # 3. 新建分类
-        with st.expander("➕ 新建/删除分类"):
-            new_cat_name = st.text_input("新分类名称", placeholder="如: DB")
-            if st.button("创建", use_container_width=True):
+        # 3. 分类操作
+        with st.expander("⚙️ 更多操作"):
+            new_cat_name = st.text_input("新建分类名", placeholder="如: DB")
+            if st.button("创建分类", use_container_width=True):
                 if new_cat_name and new_cat_name not in meta_cats:
-                    tag_mgr.save_category_meta(new_cat_name, "#3b82f6") # 默认蓝
+                    tag_mgr.save_category_meta(new_cat_name, "#3b82f6")
                     st.rerun()
             
             if st.button("删除当前分类", type="primary", use_container_width=True):
                 tag_mgr.delete_category(selected_cat)
                 st.rerun()
 
-    # --- 右侧：标签值管理 ---
+    # --- 右侧：标签值工作台 ---
     with c_main:
-        # 使用 Container 包裹，形成卡片感
         with st.container(border=True):
-            r1, r2 = st.columns([4, 2])
-            r1.subheader(f"{selected_cat} / Tags")
+            # Header
+            r1, r2 = st.columns([3, 2])
+            r1.subheader(f"{selected_cat} / Values")
             
-            # 顶部预览条 (Grafana Style)
+            # Preview Area
             with r2:
-                st.caption("样式预览")
+                st.caption("Grafana 样式预览")
                 sac.tags([sac.Tag(label=f"{selected_cat}: Demo", color=new_color, bordered=False)], align='end')
 
             st.divider()
 
-            # 筛选当前分类下的标签
-            current_tag_rows = []
+            # Filter Logic
+            current_rows = []
             for tid, t in all_tags.items():
                 if t.get('category') == selected_cat:
-                    current_tag_rows.append({"ID": tid, "Value": t['name']})
+                    current_rows.append({"ID": tid, "Value": t['name']})
             
-            # 即使为空也显示空行
-            if not current_tag_rows:
-                current_tag_rows = [{"ID": None, "Value": ""}]
+            # Empty Row for adding
+            if not current_rows:
+                current_rows = [{"ID": None, "Value": ""}]
 
-            # 批量编辑器
-            df = pd.DataFrame(current_tag_rows)
+            # Data Editor
+            df = pd.DataFrame(current_rows)
             edited_df = st.data_editor(
                 df,
                 column_config={
                     "ID": None,
-                    "Value": st.column_config.TextColumn("标签值 (直接编辑)", required=True, width="large")
+                    "Value": st.column_config.TextColumn("标签值 (直接编辑/新增)", required=True, width="large")
                 },
                 use_container_width=True,
                 hide_index=True,
@@ -282,22 +279,16 @@ def render_tag_system(tag_mgr):
                 key=f"editor_{selected_cat}"
             )
             
-            # 底部保存栏
+            # Footer Save
             c_save, _ = st.columns([1, 4])
-            if c_save.button("💾 保存列表", type="primary", use_container_width=True):
-                # 逻辑：先删掉当前分类下所有旧的，再插入新的
-                # 1. 找出所有旧ID
-                old_ids = [row['ID'] for row in current_tag_rows if row['ID']]
-                
-                # 2. 找出当前表格里保留的ID
+            if c_save.button("💾 保存列表变更", type="primary", use_container_width=True):
+                # 1. Diff Deletion
+                old_ids = [r['ID'] for r in current_rows if r['ID']]
                 kept_ids = set(edited_df["ID"].dropna().tolist())
-                
-                # 3. 删除
                 for oid in old_ids:
-                    if oid not in kept_ids:
-                        tag_mgr.delete_tag(oid)
+                    if oid not in kept_ids: tag_mgr.delete_tag(oid)
                 
-                # 4. 更新/新增
+                # 2. Upsert
                 for _, row in edited_df.iterrows():
                     if row["Value"]:
                         tid = row.get("ID")
@@ -310,8 +301,8 @@ def render_tag_system(tag_mgr):
 if __name__ == "__main__":
     main()
 
-📄 4. modules/cmd_generator/app.py
-(紧凑 Toolbar，AND 筛选逻辑，Grafana 标签渲染)
+📂 4. modules/cmd_generator/app.py
+(HUD 布局，AND 筛选，Grafana 胶囊渲染)
 import streamlit as st
 import streamlit_antd_components as sac
 import pandas as pd
@@ -321,112 +312,105 @@ import uuid
 
 def render(cfg_mgr, tag_mgr):
     # ==========================
-    # Header: 来源切换
+    # 1. HUD Header
     # ==========================
-    c_title, c_source = st.columns([1, 2])
-    c_title.subheader("🚀 命令生成器")
+    c1, c2 = st.columns([1, 1.5])
+    c1.subheader("🚀 命令生成器")
     
+    # 兼容性 Segmented
     try:
         source_label = sac.segmented(
             items=[sac.SegmentedItem(label='Team'), sac.SegmentedItem(label='Personal')],
             size='sm', align='end', color='indigo'
         )
     except:
-        source_label = st.radio("Source", ['Team', 'Personal'], horizontal=True)
-
+        source_label = st.radio("来源", ['Team', 'Personal'], horizontal=True)
+    
     source_code = 'team' if source_label == 'Team' else 'personal'
 
     # ==========================
-    # Toolbar: 紧凑操作栏
+    # 2. Control Bar (通栏高密度)
     # ==========================
-    # 数据准备
-    all_data = cfg_mgr.get_all_templates()
-    all_tags = tag_mgr.get_all_tags()
-    meta_cats = tag_mgr.get_categories_meta()
-    
-    # 构造标签选项：{id: "Cat: Name"}
-    tag_options = {tid: f"{t.get('category','Gen')}: {t['name']}" for tid, t in all_tags.items()}
-
     with st.container(border=True):
-        # 布局: 搜索(3) | 筛选(3) | 视图(1.5) | 新建(1)
-        c1, c2, c3, c4 = st.columns([3, 3, 1.5, 1])
+        # 搜索(3) | 筛选(3) | 视图(1.5) | 新建(1)
+        col_search, col_filter, col_view, col_new = st.columns([3, 3, 1.5, 1])
         
-        search = c1.text_input("Search", placeholder="Search templates...", label_visibility="collapsed")
+        # A. 搜索
+        search = col_search.text_input("Search", placeholder="Keywords...", label_visibility="collapsed")
         
-        sel_tags = c2.multiselect("Tags", options=tag_options.keys(), format_func=lambda x: tag_options[x], label_visibility="collapsed", placeholder="Filter by tags (AND)")
+        # B. 标签筛选 (Label: "Cat: Name")
+        all_tags = tag_mgr.get_all_tags()
+        meta_cats = tag_mgr.get_categories_meta()
         
-        view = c3.radio("View", ["Grid", "List"], horizontal=True, label_visibility="collapsed")
+        tag_opts = {tid: f"{t.get('category','Gen')}: {t['name']}" for tid, t in all_tags.items()}
+        sel_tags = col_filter.multiselect("Filter", options=tag_opts.keys(), format_func=lambda x: tag_options[x], label_visibility="collapsed", placeholder="Tags (AND)")
         
-        if c4.button("➕ New", type="primary", use_container_width=True):
+        # C. 视图
+        view = col_view.radio("View", ["Grid", "List"], horizontal=True, label_visibility="collapsed")
+        
+        # D. 新建
+        if col_new.button("➕ New", type="primary", use_container_width=True):
             open_editor(cfg_mgr, tag_mgr, "NEW", source_code)
 
     # ==========================
-    # Filter Logic (AND 逻辑)
+    # 3. Filter Logic (AND)
     # ==========================
+    all_data = cfg_mgr.get_all_templates()
     filtered = []
     
     for tid, t in all_data.items():
-        # 1. Source 匹配
         if t.get('source') != source_code: continue
-        
-        # 2. Search 匹配
         if search and search.lower() not in t['name'].lower(): continue
         
-        # 3. Tag 匹配 (AND Logic: 必须包含所有选中的标签)
-        t_tag_ids = set(t.get('tags', []))
-        if sel_tags:
-            if not set(sel_tags).issubset(t_tag_ids): continue
+        t_tags = set(t.get('tags', []))
+        # AND Logic: issubset
+        if sel_tags and not set(sel_tags).issubset(t_tags): continue
         
-        # 4. 组装显示对象
-        display_tags = []
+        # Build Display Tags
+        d_tags = []
         for tag_id in t.get('tags', []):
             if tag_id in all_tags:
                 tag_info = all_tags[tag_id]
                 cat = tag_info.get('category', 'Gen')
-                # 标签显示：[ Cat | Name ]
-                display_tags.append({
-                    "label": f"{cat}: {tag_info['name']}", 
-                    "color": meta_cats.get(cat, '#888')
-                })
+                # Color from Meta
+                color = meta_cats.get(cat, '#888')
+                d_tags.append({"label": f"{cat}: {tag_info['name']}", "color": color})
 
         filtered.append({
             "id": tid, "name": t['name'], "desc": t.get('desc',''), 
-            "tags": display_tags, "raw": t
+            "tags": d_tags, "raw": t
         })
 
     # ==========================
-    # Render Body
+    # 4. Render
     # ==========================
     if not filtered:
-        st.info("No templates found matching your criteria.")
+        st.info("暂无数据")
         return
 
-    st.caption(f"Showing {len(filtered)} templates")
+    st.caption(f"Showing {len(filtered)} items")
 
     if view == "List":
         render_list(filtered, cfg_mgr)
     else:
         render_grid(filtered, cfg_mgr)
 
-# --- Grid View ---
+# --- Components ---
 def render_grid(items, cfg_mgr):
     cols = st.columns(3)
     for idx, item in enumerate(items):
         with cols[idx % 3]:
             with st.container(border=True):
                 # Header
-                c_h, c_act = st.columns([5, 1])
+                c_h, c_r = st.columns([5, 1])
                 c_h.markdown(f"**{item['name']}**")
-                
-                # Quick Run
-                if c_act.button("▶", key=f"r_{item['id']}"): 
-                    open_runner(cfg_mgr, item['id'])
+                if c_r.button("▶", key=f"r_{item['id']}"): open_runner(cfg_mgr, item['id'])
                 
                 # Desc
-                if item['desc']: st.caption(item['desc'][:50])
+                if item['desc']: st.caption(item['desc'][:45])
                 else: st.caption("-")
                 
-                # Tags
+                # Grafana Pills
                 if item['tags']:
                     try:
                         sac.tags([
@@ -434,55 +418,45 @@ def render_grid(items, cfg_mgr):
                             for t in item['tags'][:4]
                         ], size='xs', align='start')
                     except: pass
-                else:
-                    st.caption("No Tags")
                 
                 # Edit
                 if st.button("Edit", key=f"e_{item['id']}", use_container_width=True):
                     open_editor(cfg_mgr, None, item['id'], item['raw']['source'])
 
-# --- List View ---
 def render_list(items, cfg_mgr):
     data = []
     for x in items:
-        data.append({
-            "ID": x['id'], 
-            "Name": x['name'], 
-            "Tags": [t['label'] for t in x['tags']], 
-            "Desc": x['desc']
-        })
-    df = pd.DataFrame(data)
+        # 列表模式下简单展示
+        t_str = [t['label'] for t in x['tags']]
+        data.append({"ID": x['id'], "Name": x['name'], "Tags": t_str, "Desc": x['desc']})
     
+    df = pd.DataFrame(data)
     try: tc = st.column_config.ListColumn("Tags")
     except: tc = st.column_config.TextColumn("Tags")
     
     event = st.dataframe(
-        df,
+        df, 
         column_config={"ID":None, "Tags": tc, "Name": st.column_config.TextColumn(width="medium")},
         use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
     )
-    if len(event.selection.rows) > 0:
-        open_runner(cfg_mgr, df.iloc[event.selection.rows[0]]['ID'])
+    if len(event.selection.rows) > 0: open_runner(cfg_mgr, df.iloc[event.selection.rows[0]]['ID'])
 
 # --- Dialogs ---
-@st.dialog("Run Template", width="large")
+@st.dialog("Run", width="large")
 def open_runner(cfg_mgr, tid):
     data = cfg_mgr.get_all_templates().get(tid)
     if not data: return st.error("Error")
     
-    c1, c2 = st.columns([1, 1.2], gap="large")
+    c1, c2 = st.columns([1, 1.2])
     inp = {}
     with c1:
-        st.caption("Parameters")
         with st.form("exec"):
             for p in data.get('params', []):
                 l = p.get('label', p['name'])
                 if p['type']=='select': inp[p['name']] = st.selectbox(l, [x.strip() for x in p.get("options","").split(",") if x.strip()])
                 else: inp[p['name']] = st.text_input(l, value=str(p.get('default','')))
-            sub = st.form_submit_button("Generate Command", type="primary", use_container_width=True)
-            
+            sub = st.form_submit_button("Run", use_container_width=True, type="primary")
     with c2:
-        st.caption("Result")
         res = "..."
         if sub:
             try:
@@ -492,7 +466,7 @@ def open_runner(cfg_mgr, tid):
             except Exception as e: res = str(e)
         st.code(res, language="bash")
 
-@st.dialog("Edit Template", width="large")
+@st.dialog("Edit", width="large")
 def open_editor(cfg_mgr, tag_mgr, tid, source):
     if tag_mgr is None: from core.tag_manager import TagManager; tag_mgr = TagManager("tags.json")
     is_new = (tid == "NEW")
@@ -500,28 +474,21 @@ def open_editor(cfg_mgr, tag_mgr, tid, source):
     
     name = st.text_input("Name", value=data.get('name',''))
     
-    # Tag Selector with Category grouping
+    # Tag Selector (Grouped by Category)
     all_tags = tag_mgr.get_all_tags()
-    # Format options nicely
     tag_opts = {tid: f"{t.get('category','Gen')}: {t['name']}" for tid, t in all_tags.items()}
-    default_tags = [t for t in data.get('tags', []) if t in tag_opts]
     
+    default_tags = [t for t in data.get('tags',[]) if t in tag_opts]
     sel_tags = st.multiselect("Tags", options=tag_opts.keys(), default=default_tags, format_func=lambda x: tag_opts[x])
     
-    desc = st.text_input("Description", value=data.get('desc',''))
+    desc = st.text_input("Desc", value=data.get('desc',''))
     
-    # Params
-    default_p = [{"name": "p1", "label": "Label", "type": "text", "default": "", "options": ""}]
-    p_data = data.get('params', default_p)
-    if not p_data: p_data = default_p
+    dp = data.get('params', [{"name": "p1", "label": "Label", "type": "text", "default": "", "options": ""}])
+    edf = st.data_editor(pd.DataFrame(dp), num_rows="dynamic", use_container_width=True)
+    code = st.text_area("Code", value=data.get('template',''), height=150)
     
-    st.caption("Parameters definition")
-    edf = st.data_editor(pd.DataFrame(p_data), num_rows="dynamic", use_container_width=True)
-    
-    code = st.text_area("Template Code", value=data.get('template',''), height=150)
-    
-    if st.button("Save Template", type="primary"):
-        if not name: return st.error("Name is required")
+    if st.button("Save", type="primary"):
+        if not name: return st.error("Req Name")
         sid = str(uuid.uuid4())[:8] if is_new else tid
         plist = [p for p in edf.to_dict('records') if p['name']]
         sdata = {"name": name, "desc": desc, "tags": sel_tags, "template": code, "params": plist}
