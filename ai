@@ -1,308 +1,315 @@
-既然你提到了 “不一定要赛博，但要朋克”，而且要 “新潮又好用”，我脑海里立刻浮现出一种现在设计界非常火的风格：新野兽派 (Neo-Brutalism)。
-这种风格完美契合你的要求：
- * 朋克 (Punk)：它反对极简主义的“性冷淡风”，使用粗黑边框、高饱和度撞色、硬朗的投影。
- * 新潮 (Trendy)：这是目前 Figma、Gumroad 等前沿科技公司最爱用的设计语言。
- * 好用 (Usable)：它的按钮像实体积木一样，点击感极强，边界分明，绝不会误触。
-我们把它命名为 "Pop-Industrial" (波普工业风)。
-请准备好，我们要把你的软件从“暗黑黑客屋”改造成一个 “前卫设计工作室”。
-🎨 第一步：重写皮肤 (theme.py)
-这次我们抛弃磨砂玻璃，改用硬边框、硬投影、像素点阵背景。
-请完全覆盖 cmd_exe/theme.py：
+哈哈，这就对了！有我在，你只需要负责“提需求”和“复制粘贴”，剩下的技术坑我来填。
+既然确立了 NiceGUI 这个方向，我们就把它当作一个正经的桌面软件来开发。它的优势是：写的时候是 Python，跑起来像原生软件，界面能做到极其炫酷（只要会写 CSS，而我会写）。
+我们不急着打包，先把这个软件的**“骨架”和“皮肤”**搭好。为了不让你晕，我们把代码拆成三个文件，放在 cmd_exe 文件夹里。
+请做好准备，我们开始搭建你的 Cyberpunk Command Nexus (赛博命令中枢)。
+📂 第一步：建立项目结构
+请新建一个文件夹 cmd_exe，然后在里面创建三个空文件：
+ * logic.py：大脑（负责存取数据、生成命令）。
+ * theme.py：皮肤（负责定义赛博朋克风格、磨砂玻璃特效）。
+ * main.py：骨架（负责把界面拼起来，程序的入口）。
+结构如下：
+cmd_exe/
+  ├── logic.py
+  ├── theme.py
+  └── main.py
+
+🧠 第二步：编写大脑 (logic.py)
+这个文件负责处理以前的那些 JSON 数据。代码和之前很像，但我做了一些优化，适配 NiceGUI。
+操作：打开 logic.py，粘贴以下代码：
+# logic.py
+import json
+import os
+import uuid
+import shlex
+from jinja2 import Template
+
+# 数据存储目录
+DATA_DIR = "data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+
+class DataManager:
+    def __init__(self):
+        self.tag_file = os.path.join(DATA_DIR, "tags.json")
+        self.tmpl_file = os.path.join(DATA_DIR, "templates.json")
+        self._init_files()
+
+    def _init_files(self):
+        # 初始化标签文件
+        if not os.path.exists(self.tag_file):
+            default_tags = {
+                "t1": {"name": "Prod", "color": "#FF4D4D", "cat": "Env"},
+                "t2": {"name": "Dev", "color": "#4D96FF", "cat": "Env"},
+                "t3": {"name": "DB", "color": "#6BCB77", "cat": "Type"}
+            }
+            with open(self.tag_file, 'w', encoding='utf-8') as f: json.dump(default_tags, f)
+            
+        # 初始化模板文件
+        if not os.path.exists(self.tmpl_file):
+            with open(self.tmpl_file, 'w', encoding='utf-8') as f: json.dump({}, f)
+
+    def get_tags(self):
+        try:
+            with open(self.tag_file, 'r', encoding='utf-8') as f: return json.load(f)
+        except: return {}
+
+    def get_templates(self):
+        try:
+            with open(self.tmpl_file, 'r', encoding='utf-8') as f: return json.load(f)
+        except: return {}
+
+    def save_template(self, tid, data):
+        all_data = self.get_templates()
+        all_data[tid] = data
+        with open(self.tmpl_file, 'w', encoding='utf-8') as f: 
+            json.dump(all_data, f, indent=2, ensure_ascii=False)
+
+    def delete_template(self, tid):
+        all_data = self.get_templates()
+        if tid in all_data:
+            del all_data[tid]
+            with open(self.tmpl_file, 'w', encoding='utf-8') as f: 
+                json.dump(all_data, f, indent=2, ensure_ascii=False)
+
+    def render_command(self, template_str, params):
+        """渲染命令，带防注入处理"""
+        safe_inputs = {
+            k: (shlex.quote(str(v)) if isinstance(v, str) else v) 
+            for k,v in params.items()
+        }
+        tmpl = Template(template_str)
+        return tmpl.render(**safe_inputs)
+
+# 实例化一个单例对象供外部使用
+db = DataManager()
+
+🎨 第三步：定制赛博皮肤 (theme.py)
+这是“高级感”的核心来源。NiceGUI 使用 Tailwind CSS，我们可以通过字符串定义极其复杂的样式。
+操作：打开 theme.py，粘贴以下代码：
 # theme.py
 from nicegui import ui
 
-# --- 核心配色 (Neo-Brutalism Palette) ---
-BG_COLOR = "#F0F0F0"       # 浅灰底色，像未漂白的纸
-PRIMARY = "#8B5CF6"        # 朋克紫
-ACCENT_TEAL = "#2DD4BF"    # 荧光青
-ACCENT_PINK = "#FB7185"    # 荧光粉
-ACCENT_YELLOW = "#FBBF24"  # 警示黄
-TEXT_MAIN = "#18181B"      # 极深灰（代替纯黑）
+# --- 核心配色 ---
+# 我们不使用纯黑，而是使用深蓝黑，更有质感
+BG_COLOR = "#0F172A"  # 深邃夜空蓝
+ACCENT_COLOR = "#3B82F6" # 科技蓝
 
 # --- 样式常量 ---
 
-# 1. 野兽派卡片 (硬边框 + 硬阴影)
-# box-shadow: X偏移 Y偏移 模糊 颜色
-BRUTAL_CARD = (
-    "background-color: white; "
-    "border: 2px solid #000000; "        # 2px 纯黑粗边框
-    "border-radius: 8px; "
-    "box-shadow: 4px 4px 0px 0px #000000; " # 硬阴影，不模糊
-    "transition: all 0.1s ease-in-out; "
+# 1. 磨砂玻璃卡片 (Glassmorphism)
+# backdrop-filter: blur(12px) 是核心，制造磨砂感
+# rgba(30, 41, 59, 0.7) 是半透明背景
+GLASS_CARD = (
+    "background-color: rgba(30, 41, 59, 0.7); "
+    "backdrop-filter: blur(12px); "
+    "border: 1px solid rgba(255, 255, 255, 0.08); "
+    "border-radius: 12px; "
+    "box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); "
+    "transition: all 0.3s ease; "
 )
 
-# 2. 波普按钮 (点击时会有按压下去的效果)
-# 我们会在代码里动态加 active:translate 效果
-BRUTAL_BTN = (
-    "border: 2px solid #000000; "
-    "border-radius: 6px; "
-    "font-weight: 800; " # 超粗字体
-    "text-transform: uppercase; " # 全大写
-    "box-shadow: 2px 2px 0px 0px #000000; "
-    "color: black; "
+# 2. 霓虹按钮 (带渐变和发光)
+NEON_BTN = (
+    "background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); "
+    "border: none; "
+    "color: white; "
+    "box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); "
+    "font-weight: bold; "
+    "letter-spacing: 0.5px; "
 )
 
-# 3. 复古输入框
-BRUTAL_INPUT = (
-    "background-color: white; "
-    "border: 2px solid #000000; "
+# 3. 输入框样式 (去边框，只有底色)
+INPUT_STYLE = (
+    "background-color: rgba(0, 0, 0, 0.3); "
     "border-radius: 6px; "
-    "padding: 4px 8px; "
-    "color: black; "
+    "border: 1px solid rgba(255,255,255,0.1); "
+    "color: white; "
 )
 
 def setup_global_theme():
-    """应用全局样式"""
-    # 这次我们用亮色模式，因为野兽派通常是白底黑字
-    # ui.dark_mode().disable() # 默认就是亮色，不需要强制
+    """应用全局样式设置"""
+    # 强制开启暗黑模式
+    ui.dark_mode().enable()
     
-    # 注入全局 CSS
-    ui.add_head_html(f'''
+    # 设置页面背景色
+    ui.query('body').style(f'background-color: {BG_COLOR};')
+    
+    # 注入全局 CSS 修正滚动条样式
+    ui.add_head_html('''
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&family=Space+Grotesk:wght@300;500;700&display=swap');
+            /* 细长的滚动条 */
+            ::-webkit-scrollbar { width: 8px; height: 8px; }
+            ::-webkit-scrollbar-track { background: #0F172A; }
+            ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+            ::-webkit-scrollbar-thumb:hover { background: #475569; }
             
-            body {{
-                background-color: {BG_COLOR};
-                /* 点阵背景图，增加工业感 */
-                background-image: radial-gradient(#000 1px, transparent 1px);
-                background-size: 20px 20px;
-                color: {TEXT_MAIN};
-                font-family: 'Space Grotesk', sans-serif; /* 这种字体非常有科技感 */
-            }}
-            
-            /* 这种风格的代码块样式 */
-            .q-badge {{ border: 1px solid black; }}
-            
-            /* 按钮按下去的微交互 */
-            .brutal-btn:active {{
-                transform: translate(2px, 2px);
-                box-shadow: 0px 0px 0px 0px #000000 !important;
-            }}
+            /* 让所有文字默认稍微亮一点 */
+            body { color: #E2E8F0; font-family: 'Segoe UI', sans-serif; }
         </style>
     ''')
 
-🦴 第二步：重构骨架 (main.py)
-这次我们不仅换了皮，还把**“新建命令”和“编辑功能”**加上了。界面布局使用了更加活泼的 Masonry (瀑布流) 感觉。
-请完全覆盖 cmd_exe/main.py：
+🦴 第四步：组装程序 (main.py)
+这里我们先把最核心的 “命令列表” 和 “运行弹窗” 做出来，让你先看到效果。
+操作：打开 main.py，粘贴以下代码：
 # main.py
 from nicegui import ui, app
-from logic import db
-import theme
-import uuid
+from logic import db  # 导入逻辑
+import theme          # 导入皮肤
 
-# 应用皮肤
+# 1. 应用皮肤
 theme.setup_global_theme()
 
 # =========================================
-# 组件定义 (为了代码复用)
-# =========================================
-def brutal_button(text, icon=None, color="#FFFFFF", on_click=None):
-    """封装一个野兽派按钮"""
-    btn = ui.button(text, icon=icon, on_click=on_click) \
-        .style(theme.BRUTAL_BTN + f"background-color: {color};") \
-        .classes('brutal-btn text-black')
-    return btn
-
-def tag_badge(text, color_hex):
-    """野兽派标签"""
-    return ui.label(text).style(
-        f"background-color: {color_hex}; border: 1px solid black; box-shadow: 2px 2px 0 black;"
-    ).classes('px-2 py-0.5 text-xs font-bold rounded-full')
-
-# =========================================
-# 核心界面
+# 界面构建区
 # =========================================
 
-# --- 顶栏 ---
-with ui.header().classes('bg-transparent q-py-lg mb-4'):
-    with ui.row().classes('w-full max-w-6xl mx-auto items-end justify-between px-4'):
-        # LOGO
-        with ui.row().classes('items-center gap-0'):
-            ui.label('CMD').style('font-family: "JetBrains Mono"; font-weight: 800; background: black; color: white; padding: 4px 8px; font-size: 24px;')
-            ui.label('NEXUS').style('font-family: "JetBrains Mono"; font-weight: 800; border: 3px solid black; background: white; color: black; padding: 4px 8px; font-size: 24px;')
+# --- 顶栏 (Header) ---
+with ui.header().classes('bg-transparent q-py-md'):
+    with ui.row().classes('w-full max-w-7xl mx-auto items-center justify-between px-4'):
+        # 左侧 LOGO
+        with ui.row().classes('items-center gap-2'):
+            ui.icon('terminal', size='md', color='blue-500')
+            ui.label('COMMAND NEXUS').classes('text-xl font-bold tracking-widest text-white')
         
-        # 搜索与操作
-        with ui.row().classes('gap-4 items-center'):
-            search_input = ui.input(placeholder='SEARCH_COMMANDS') \
-                .props('outlined dense') \
-                .style(theme.BRUTAL_INPUT + "box-shadow: 4px 4px 0 black; width: 240px;")
+        # 右侧 工具栏
+        with ui.row().classes('gap-4'):
+            # 搜索框 (使用 Quasar 的 props 来控制暗黑风格)
+            search_input = ui.input(placeholder='Search protocol...') \
+                .props('dark dense standoutless borderless input-class="text-white"') \
+                .style(theme.INPUT_STYLE + "width: 250px; padding-left: 10px;")
             
-            brutal_button('NEW COMMAND', icon='add', color=theme.ACCENT_TEAL, on_click=lambda: open_editor())
+            ui.button(icon='add', on_click=lambda: ui.notify('新建功能开发中...')) \
+                .props('round flat color=white')
 
-# --- 主内容区 ---
-with ui.element('div').classes('w-full max-w-6xl mx-auto px-4 pb-20'):
+# --- 主内容区 (Main) ---
+# 使用 grid 布局，中间放置内容
+with ui.element('div').classes('w-full max-w-7xl mx-auto p-6'):
     
+    # 使用 @ui.refreshable 装饰器，这样我们可以随时调用 grid.refresh() 来重绘列表
     @ui.refreshable
-    def render_grid(filter_text=""):
+    def render_command_grid(filter_text=""):
         templates = db.get_templates()
+        tags = db.get_tags()
         
+        # 如果没数据
         if not templates:
-            with ui.column().classes('w-full items-center py-20'):
-                ui.label('EMPTY_SYSTEM').classes('text-4xl font-black text-gray-400')
-                ui.label('Create your first protocol now.').classes('font-mono mt-2')
+            with ui.column().classes('w-full items-center justify-center py-20 opacity-50'):
+                ui.icon('inbox', size='4rem', color='gray')
+                ui.label('No commands initialized.').classes('text-lg mt-4')
             return
 
-        # 瀑布流布局
-        with ui.grid().classes('grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8'):
+        # 卡片网格布局 (响应式：手机1列，平板2列，电脑3列)
+        with ui.grid().classes('grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'):
             
             for tid, t in templates.items():
-                if filter_text and filter_text.lower() not in t['name'].lower(): continue
+                # 过滤逻辑
+                if filter_text and filter_text.lower() not in t['name'].lower():
+                    continue
                 
-                # === 卡片本体 ===
-                with ui.card().style(theme.BRUTAL_CARD).classes('relative group hover:-translate-y-1 cursor-default'):
+                # === 渲染卡片 ===
+                # group 类用于处理悬停效果
+                with ui.card().style(theme.GLASS_CARD).classes('relative group hover:-translate-y-1 transition-transform cursor-default'):
                     
-                    # 装饰性标题栏
-                    with ui.row().classes('w-full border-b-2 border-black pb-2 mb-3 justify-between bg-yellow-50 -mx-4 -mt-4 px-4 pt-3 rounded-t-lg'):
-                        ui.label(t['name']).classes('font-bold text-lg font-mono')
-                        # 编辑按钮 (小)
-                        ui.button(icon='edit', on_click=lambda id=tid: open_editor(id)) \
-                            .props('flat dense round color=black size=sm')
-
-                    # 描述
-                    ui.label(t.get('desc', '-')).classes('text-sm text-gray-600 mb-4 h-10 line-clamp-2')
-
-                    # 标签区
+                    # 1. 标题行
+                    with ui.row().classes('w-full justify-between items-start mb-2'):
+                        ui.label(t['name']).classes('text-lg font-bold text-blue-100')
+                        # 右上角小图标
+                        ui.icon('dns', size='xs', color='gray-500')
+                    
+                    # 2. 描述
+                    ui.label(t.get('desc', 'No description provided.')) \
+                        .classes('text-xs text-gray-400 h-10 line-clamp-2 mb-3')
+                    
+                    # 3. 标签行
                     with ui.row().classes('gap-2 mb-4'):
-                        # 随便搞点颜色逻辑，或者从tags里取
-                        ui.label('PROD').style('border: 1px solid black; background: #FB7185; box-shadow: 1px 1px 0 black;').classes('px-1 text-[10px] font-bold')
-                        ui.label('SSH').style('border: 1px solid black; background: #2DD4BF; box-shadow: 1px 1px 0 black;').classes('px-1 text-[10px] font-bold')
+                        for tag_id in t.get('tags', []):
+                            if tag_id in tags:
+                                tag_info = tags[tag_id]
+                                # 小胶囊标签
+                                ui.label(tag_info['name']) \
+                                    .style(f"background: {tag_info['color']}33; color: {tag_info['color']}; border: 1px solid {tag_info['color']}66") \
+                                    .classes('text-[10px] px-2 py-0.5 rounded-full')
 
-                    # 底部大按钮
-                    brutal_button('EXECUTE', icon='play_arrow', color=theme.ACCENT_YELLOW, on_click=lambda id=tid: open_runner(id)) \
-                        .classes('w-full')
+                    # 4. 底部按钮 (悬停时变亮)
+                    ui.button('RUN COMMAND', on_click=lambda id=tid: open_runner(id)) \
+                        .style(theme.NEON_BTN + "width: 100%; border-radius: 8px;") \
+                        .classes('text-sm shadow-lg')
 
-    render_grid()
-    search_input.on('change', lambda e: render_grid.refresh(e.value))
-
-
-# =========================================
-# 弹窗逻辑 (Editor & Runner)
-# =========================================
-
-# --- 编辑器弹窗 ---
-def open_editor(tid=None):
-    is_edit = tid is not None
-    data = db.get_templates().get(tid, {}) if is_edit else {}
+    # 初次渲染
+    render_command_grid()
     
-    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_CARD + "min-width: 600px; padding: 0;"):
-        # 弹窗头
-        with ui.row().classes('w-full bg-black p-4 justify-between items-center'):
-            ui.label('EDIT_PROTOCOL' if is_edit else 'NEW_PROTOCOL').classes('text-white font-mono font-bold text-xl')
-            ui.button(icon='close', on_click=dialog.close).props('flat dense color=white')
-        
-        # 弹窗体
-        with ui.column().classes('p-6 w-full gap-4'):
-            name = ui.input('NAME', value=data.get('name', '')).props('outlined dense').style(theme.BRUTAL_INPUT).classes('w-full')
-            desc = ui.input('DESCRIPTION', value=data.get('desc', '')).props('outlined dense').style(theme.BRUTAL_INPUT).classes('w-full')
-            
-            ui.label('TEMPLATE CODE (Jinja2)').classes('font-bold mt-2')
-            code = ui.textarea(value=data.get('template', '')).props('outlined dense').style(theme.BRUTAL_INPUT + "font-family: monospace;").classes('w-full bg-gray-50')
-            
-            # 简单参数定义 (暂时用文本解析，简化操作)
-            # 实际可以做更复杂的表格
-            ui.label('PARAMS (Format: name,label,default)').classes('font-bold mt-2 text-xs')
-            
-            # 辅助函数：把params列表转成字符串显示
-            def params_to_str(plist):
-                return "\n".join([f"{p['name']},{p.get('label','')},{p.get('default','')}" for p in plist])
-            
-            # 辅助函数：把字符串转回params列表
-            def str_to_params(text):
-                plist = []
-                for line in text.split('\n'):
-                    parts = line.split(',')
-                    if len(parts) >= 1 and parts[0].strip():
-                        plist.append({
-                            "name": parts[0].strip(),
-                            "label": parts[1].strip() if len(parts)>1 else parts[0],
-                            "default": parts[2].strip() if len(parts)>2 else "",
-                            "type": "text"
-                        })
-                return plist
+    # 绑定搜索事件
+    search_input.on('change', lambda e: render_command_grid.refresh(e.value))
 
-            current_params_str = params_to_str(data.get('params', []))
-            params_input = ui.textarea(value=current_params_str).props('outlined dense placeholder="ip,Target IP,127.0.0.1"').style(theme.BRUTAL_INPUT).classes('w-full h-24')
 
-        # 底部栏
-        with ui.row().classes('p-4 w-full justify-end bg-gray-100 border-t-2 border-black'):
-            if is_edit:
-                # 删除按钮
-                def delete_curr():
-                    db.delete_template(tid)
-                    render_grid.refresh()
-                    dialog.close()
-                    ui.notify('DELETED', color='red')
-                ui.button('DELETE', on_click=delete_curr).props('flat color=red').classes('mr-auto')
-
-            def save():
-                if not name.value: return ui.notify('Name required', color='red')
-                
-                save_id = tid if is_edit else str(uuid.uuid4())[:8]
-                new_data = {
-                    "name": name.value,
-                    "desc": desc.value,
-                    "template": code.value,
-                    "params": str_to_params(params_input.value),
-                    "tags": data.get('tags', []) # 暂时保留旧tags
-                }
-                db.save_template(save_id, new_data)
-                render_grid.refresh()
-                dialog.close()
-                ui.notify('SAVED', type='positive', color='black')
-
-            brutal_button('SAVE CHANGES', color=theme.PRIMARY, on_click=save).classes('text-white')
-
-    dialog.open()
-
-# --- 运行器弹窗 ---
+# =========================================
+# 弹窗逻辑区
+# =========================================
 def open_runner(tid):
     data = db.get_templates().get(tid)
     if not data: return
 
-    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_CARD + "min-width: 500px; padding: 0;"):
-        with ui.row().classes('w-full bg-yellow-400 p-4 border-b-2 border-black items-center justify-between'):
-            ui.label(f">> RUN: {data['name']}").classes('font-mono font-black text-xl')
-            ui.icon('terminal', size='sm')
-
+    with ui.dialog() as dialog, ui.card().style(theme.GLASS_CARD + "min-width: 500px; border: 1px solid #3B82F6;"):
+        # 弹窗标题
+        with ui.row().classes('w-full items-center gap-2 mb-4'):
+            ui.icon('rocket_launch', color='blue').classes('text-2xl')
+            ui.label(f"Execute: {data['name']}").classes('text-xl font-bold')
+        
+        # 动态表单容器
         inputs = {}
-        with ui.column().classes('p-6 w-full gap-4'):
+        with ui.column().classes('w-full gap-3'):
             for p in data.get('params', []):
-                inputs[p['name']] = ui.input(p.get('label', p['name']), value=p.get('default', '')) \
-                    .props('outlined dense').style(theme.BRUTAL_INPUT).classes('w-full')
-            
-            res_area = ui.code('READY_TO_GENERATE...').classes('w-full p-4 border-2 border-black bg-black text-green-400 font-mono rounded')
+                label = p.get('label', p['name'])
+                inputs[p['name']] = ui.input(label, value=p.get('default', '')) \
+                    .props('dark outlined dense') \
+                    .style('width: 100%;')
+        
+        # 结果显示区
+        result_box = ui.code('Waiting for input...').classes('w-full mt-4 p-3 rounded bg-black/50 text-green-400 font-mono text-sm')
 
-            def run():
-                try:
-                    pvals = {k: v.value for k,v in inputs.items()}
-                    cmd = db.render_command(data.get('template',''), pvals)
-                    res_area.content = cmd
-                    ui.clipboard.write(cmd)
-                    ui.notify('COPIED TO CLIPBOARD', color='black')
-                except Exception as e:
-                    ui.notify(str(e), color='red')
-            
-            brutal_button('GENERATE & COPY', icon='bolt', color=theme.ACCENT_TEAL, on_click=run).classes('w-full mt-2')
+        def generate():
+            try:
+                # 收集参数值
+                params = {k: v.value for k, v in inputs.items()}
+                res = db.render_command(data.get('template', ''), params)
+                result_box.content = res
+                ui.notify('Command Generated!', type='positive', color='black')
+            except Exception as e:
+                ui.notify(f'Error: {e}', type='negative')
 
-    dialog.open()
+        # 底部按钮栏
+        with ui.row().classes('w-full justify-end mt-6 gap-2'):
+            ui.button('Close', on_click=dialog.close).props('flat color=gray')
+            ui.button('Generate', on_click=generate).style(theme.NEON_BTN)
 
-ui.run(title="CMD_NEXUS", native=True, window_size=(1000, 800), reload=False)
+        dialog.open()
 
-🚀 启动指南
- * 保存这两个文件。
- * 确保 logic.py 还在（如果不在了就用上一条回复里的）。
- * 运行：
+
+# =========================================
+# 启动
+# =========================================
+# native=True 开启本地窗口模式
+ui.run(title="Command Nexus", native=True, window_size=(1100, 750), reload=False)
+
+🚀 运行时刻
+ * 打开你的终端。
+ * 进入 cmd_exe 文件夹。
+ * 运行命令：
    python main.py
 
-你应该会看到：
- * 白底黑边的硬朗界面。
- * 背景有点阵纹理。
- * 按钮是亮黄色、亮紫色，而且有粗黑的边框。
- * 点击按钮时，它会真的**“按下去”**（消失掉阴影，位移）。
- * 左上角的 LOGO 像是贴纸一样拼接的。
-这套界面既有**“工业朋克”的粗糙感，又符合现代审美的“新潮”**感，而且操作逻辑非常清晰（所见即所得）。
-快去试试，新建几个命令，填入：
- * Name: Deploy to Prod
- * Params: version,Image Version,v1.0.0 (注意这行的格式：英文名,中文名,默认值)
- * Template: docker run my-app:{{ version }}
-看看那个卡片和弹窗的效果，是不是很酷？
+你应该能看到：
+一个独立的深蓝色窗口弹出来，界面上有磨砂质感的卡片（虽然现在可能是空的或者只有一个测试数据），右上角有搜索框。
+注意：因为是全新的数据文件夹，你可能暂时看不到命令卡片。
+你可以去 cmd_exe/data/templates.json 里手动贴一段测试数据进去看看效果：
+{
+  "101": {
+    "name": "Check Server Status",
+    "desc": "Check the disk usage and uptime of the target server.",
+    "tags": ["t1", "t3"],
+    "template": "ssh user@{{ ip }} 'df -h && uptime'",
+    "params": [{"name": "ip", "label": "Target IP", "default": "192.168.1.1"}]
+  }
+}
+
+(保存json后，关掉程序重新运行 python main.py)
+快试试这个效果！告诉我这个 Cyberpunk 界面 是否符合你的审美？如果满意，我们下一步就加上 “新建/编辑” 功能，彻底让你摆脱手写 JSON。
