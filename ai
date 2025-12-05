@@ -1,272 +1,308 @@
-没问题！既然代码基础薄弱，我们就不要一次性把所有文件都堆上来，那样容易乱。
-我们采用**“搭积木”**的策略：
- * 先建好文件夹（搭架子）。
- * 先搞定核心样式和基础功能（打地基）。
- * 确保程序能跑起来，再往里填内容。
-这是第一阶段，我们先把项目结构、美化包（CSS） 和 数据管理核心（Core） 建好。
-第一步：创建文件夹结构
-请在你存放代码的目录下，新建一个文件夹叫 cmd_generator。
-进入这个文件夹，然后创建以下子文件夹（如果不会用命令行，直接在Windows/Mac的文件管理器里右键新建文件夹即可）：
-cmd_generator/
-  ├── assets/          <-- 用来放图片和样式文件
-  ├── core/            <-- 用来放处理数据的核心代码
-  ├── views/           <-- 用来放不同的界面（后续再加）
-  └── data/            <-- 用来存你的 json 数据文件（先建好，保持整洁）
+既然你提到了 “不一定要赛博，但要朋克”，而且要 “新潮又好用”，我脑海里立刻浮现出一种现在设计界非常火的风格：新野兽派 (Neo-Brutalism)。
+这种风格完美契合你的要求：
+ * 朋克 (Punk)：它反对极简主义的“性冷淡风”，使用粗黑边框、高饱和度撞色、硬朗的投影。
+ * 新潮 (Trendy)：这是目前 Figma、Gumroad 等前沿科技公司最爱用的设计语言。
+ * 好用 (Usable)：它的按钮像实体积木一样，点击感极强，边界分明，绝不会误触。
+我们把它命名为 "Pop-Industrial" (波普工业风)。
+请准备好，我们要把你的软件从“暗黑黑客屋”改造成一个 “前卫设计工作室”。
+🎨 第一步：重写皮肤 (theme.py)
+这次我们抛弃磨砂玻璃，改用硬边框、硬投影、像素点阵背景。
+请完全覆盖 cmd_exe/theme.py：
+# theme.py
+from nicegui import ui
 
-建好后，我们开始创建文件。
-第二步：注入灵魂（样式文件）
-这个文件负责让界面“看起来高级”。我们要把原来 Streamlit 土气的白色背景和直角边框改成卡片式设计。
-文件路径：assets/style.css
-操作：在 assets 文件夹里新建 style.css，粘贴以下内容：
-/* assets/style.css */
+# --- 核心配色 (Neo-Brutalism Palette) ---
+BG_COLOR = "#F0F0F0"       # 浅灰底色，像未漂白的纸
+PRIMARY = "#8B5CF6"        # 朋克紫
+ACCENT_TEAL = "#2DD4BF"    # 荧光青
+ACCENT_PINK = "#FB7185"    # 荧光粉
+ACCENT_YELLOW = "#FBBF24"  # 警示黄
+TEXT_MAIN = "#18181B"      # 极深灰（代替纯黑）
 
-/* 1. 全局字体优化 (使用系统自带的高级等宽字体) */
-code {
-    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
-    font-size: 0.9rem !important;
-}
+# --- 样式常量 ---
 
-/* 2. 隐藏 Streamlit 默认的右上角菜单和页脚，看起来像独立APP */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-
-/* 3. 自定义卡片样式 (这是高级感的关键) */
-/* 我们会在代码里用 <div class="cmd-card"> 包裹内容 */
-.cmd-card {
-    background-color: #ffffff;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 15px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); /* 轻微的阴影 */
-    border: 1px solid #f0f2f6;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.cmd-card:hover {
-    transform: translateY(-2px); /* 鼠标悬停微微上浮 */
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-}
-
-/* 4. 优化侧边栏背景 */
-[data-testid="stSidebar"] {
-    background-color: #f8f9fa;
-    border-right: 1px solid #e0e0e0;
-}
-
-/* 5. 调整标题间距，不要太松散 */
-h3 {
-    padding-top: 0 !important;
-    margin-top: 0 !important;
-}
-
-第三步：核心逻辑——Tag 管理器
-你最不满意 Tag 管理，所以我们先把它的大脑写好。这个文件负责读取和保存 Tag，增加了自动备份和错误处理，防止你手误删了文件。
-文件路径：core/tag_manager.py
-操作：在 core 文件夹里新建 tag_manager.py，粘贴以下内容：
-# core/tag_manager.py
-import json
-import os
-import uuid
-
-# 数据文件默认存在 data 目录下
-DATA_FILE = os.path.join("data", "tags.json")
-
-class TagManager:
-    def __init__(self):
-        self.filepath = DATA_FILE
-        self._ensure_file()
-
-    def _ensure_file(self):
-        """确保文件存在，如果不存在就创建一个带默认数据的"""
-        if not os.path.exists(self.filepath):
-            default_data = {
-                "tags": {
-                    "t1": {"name": "MySQL", "category": "Database", "color": "#FF6B6B"},
-                    "t2": {"name": "Linux", "category": "OS", "color": "#4D96FF"},
-                    "t3": {"name": "Docker", "category": "Container", "color": "#6BCB77"}
-                },
-                "categories": ["Database", "OS", "Container", "Network", "AI"]
-            }
-            # 自动创建目录
-            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(default_data, f, indent=4, ensure_ascii=False)
-
-    def load_data(self):
-        """读取数据"""
-        try:
-            with open(self.filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            return {"tags": {}, "categories": []}
-
-    def save_data(self, data):
-        """保存数据"""
-        with open(self.filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-
-    # --- 供界面调用的简单接口 ---
-
-    def get_all_tags(self):
-        """获取所有 Tag 字典"""
-        return self.load_data().get("tags", {})
-
-    def get_categories(self):
-        """获取所有分类列表"""
-        return self.load_data().get("categories", ["General"])
-
-    def add_tag(self, name, category, color):
-        """新增一个 Tag"""
-        data = self.load_data()
-        # 生成一个随机ID，防止名字重复冲突
-        new_id = str(uuid.uuid4())[:8]
-        data["tags"][new_id] = {
-            "name": name,
-            "category": category,
-            "color": color
-        }
-        self.save_data(data)
-        return True
-    
-    def add_category(self, cat_name):
-        """新增分类"""
-        data = self.load_data()
-        if cat_name not in data["categories"]:
-            data["categories"].append(cat_name)
-            self.save_data(data)
-
-    def delete_tag(self, tag_id):
-        """删除 Tag"""
-        data = self.load_data()
-        if tag_id in data["tags"]:
-            del data["tags"][tag_id]
-            self.save_data(data)
-
-第四步：核心逻辑——模板配置管理器
-这个文件负责处理你的命令模板（CRUD）。
-文件路径：core/config_manager.py
-操作：在 core 文件夹里新建 config_manager.py，粘贴以下内容：
-# core/config_manager.py
-import json
-import os
-
-DATA_FILE = os.path.join("data", "templates.json")
-
-class ConfigManager:
-    def __init__(self):
-        self.filepath = DATA_FILE
-        self._ensure_file()
-
-    def _ensure_file(self):
-        if not os.path.exists(self.filepath):
-            default_data = {} # 默认为空
-            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(default_data, f, ensure_ascii=False)
-
-    def get_all_templates(self):
-        try:
-            with open(self.filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-
-    def save_template(self, tid, template_data, source="team"):
-        """保存或更新模板"""
-        data = self.get_all_templates()
-        template_data['source'] = source # 标记来源
-        data[tid] = template_data
-        
-        with open(self.filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-            
-    def delete_template(self, tid):
-        data = self.get_all_templates()
-        if tid in data:
-            del data[tid]
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-
-第五步：主程序入口 (App Shell)
-这是整个程序的骨架。我们先不写复杂的界面，先把导航栏搭起来，测试一下我们的CSS有没有生效。
-文件路径：app.py (直接在 cmd_generator 根目录下)
-操作：粘贴以下内容：
-# app.py
-import streamlit as st
-import streamlit_antd_components as sac
-import os
-
-# 设置页面配置 (必须是第一行代码)
-st.set_page_config(
-    page_title="Command Workspace",
-    page_icon="🚀",
-    layout="wide",
-    initial_sidebar_state="expanded"
+# 1. 野兽派卡片 (硬边框 + 硬阴影)
+# box-shadow: X偏移 Y偏移 模糊 颜色
+BRUTAL_CARD = (
+    "background-color: white; "
+    "border: 2px solid #000000; "        # 2px 纯黑粗边框
+    "border-radius: 8px; "
+    "box-shadow: 4px 4px 0px 0px #000000; " # 硬阴影，不模糊
+    "transition: all 0.1s ease-in-out; "
 )
 
-# --- 加载 CSS 样式的函数 ---
-def load_css(file_name):
-    with open(file_name) as f:
-        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+# 2. 波普按钮 (点击时会有按压下去的效果)
+# 我们会在代码里动态加 active:translate 效果
+BRUTAL_BTN = (
+    "border: 2px solid #000000; "
+    "border-radius: 6px; "
+    "font-weight: 800; " # 超粗字体
+    "text-transform: uppercase; " # 全大写
+    "box-shadow: 2px 2px 0px 0px #000000; "
+    "color: black; "
+)
 
-# 加载我们写的 style.css
-css_path = os.path.join("assets", "style.css")
-if os.path.exists(css_path):
-    load_css(css_path)
+# 3. 复古输入框
+BRUTAL_INPUT = (
+    "background-color: white; "
+    "border: 2px solid #000000; "
+    "border-radius: 6px; "
+    "padding: 4px 8px; "
+    "color: black; "
+)
 
-# --- 侧边栏导航 (Sidebar Navigation) ---
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/906/906324.png", width=50) # 放个临时LOGO
-    st.markdown("### cmd_gen v2.0")
+def setup_global_theme():
+    """应用全局样式"""
+    # 这次我们用亮色模式，因为野兽派通常是白底黑字
+    # ui.dark_mode().disable() # 默认就是亮色，不需要强制
     
-    # 使用 Antd 的高级菜单组件
-    menu = sac.menu([
-        sac.MenuItem('控制台', icon='terminal', description='Command Hub'),
-        sac.MenuItem('标签工坊', icon='tags', description='Tag Studio'),
-        sac.MenuItem('编辑器', icon='pen', description='Template Editor'),
-        sac.MenuItem('数据看板', icon='bar-chart', disabled=True), # 暂时禁用
-    ], open_all=True, size='middle', variant='filled', color='indigo')
+    # 注入全局 CSS
+    ui.add_head_html(f'''
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&family=Space+Grotesk:wght@300;500;700&display=swap');
+            
+            body {{
+                background-color: {BG_COLOR};
+                /* 点阵背景图，增加工业感 */
+                background-image: radial-gradient(#000 1px, transparent 1px);
+                background-size: 20px 20px;
+                color: {TEXT_MAIN};
+                font-family: 'Space Grotesk', sans-serif; /* 这种字体非常有科技感 */
+            }}
+            
+            /* 这种风格的代码块样式 */
+            .q-badge {{ border: 1px solid black; }}
+            
+            /* 按钮按下去的微交互 */
+            .brutal-btn:active {{
+                transform: translate(2px, 2px);
+                box-shadow: 0px 0px 0px 0px #000000 !important;
+            }}
+        </style>
+    ''')
 
-# --- 主界面路由逻辑 ---
-if menu == '控制台':
-    st.title("🚀 命令控制台")
-    st.info("这里将展示搜索和运行界面... (下一阶段开发)")
+🦴 第二步：重构骨架 (main.py)
+这次我们不仅换了皮，还把**“新建命令”和“编辑功能”**加上了。界面布局使用了更加活泼的 Masonry (瀑布流) 感觉。
+请完全覆盖 cmd_exe/main.py：
+# main.py
+from nicegui import ui, app
+from logic import db
+import theme
+import uuid
+
+# 应用皮肤
+theme.setup_global_theme()
+
+# =========================================
+# 组件定义 (为了代码复用)
+# =========================================
+def brutal_button(text, icon=None, color="#FFFFFF", on_click=None):
+    """封装一个野兽派按钮"""
+    btn = ui.button(text, icon=icon, on_click=on_click) \
+        .style(theme.BRUTAL_BTN + f"background-color: {color};") \
+        .classes('brutal-btn text-black')
+    return btn
+
+def tag_badge(text, color_hex):
+    """野兽派标签"""
+    return ui.label(text).style(
+        f"background-color: {color_hex}; border: 1px solid black; box-shadow: 2px 2px 0 black;"
+    ).classes('px-2 py-0.5 text-xs font-bold rounded-full')
+
+# =========================================
+# 核心界面
+# =========================================
+
+# --- 顶栏 ---
+with ui.header().classes('bg-transparent q-py-lg mb-4'):
+    with ui.row().classes('w-full max-w-6xl mx-auto items-end justify-between px-4'):
+        # LOGO
+        with ui.row().classes('items-center gap-0'):
+            ui.label('CMD').style('font-family: "JetBrains Mono"; font-weight: 800; background: black; color: white; padding: 4px 8px; font-size: 24px;')
+            ui.label('NEXUS').style('font-family: "JetBrains Mono"; font-weight: 800; border: 3px solid black; background: white; color: black; padding: 4px 8px; font-size: 24px;')
+        
+        # 搜索与操作
+        with ui.row().classes('gap-4 items-center'):
+            search_input = ui.input(placeholder='SEARCH_COMMANDS') \
+                .props('outlined dense') \
+                .style(theme.BRUTAL_INPUT + "box-shadow: 4px 4px 0 black; width: 240px;")
+            
+            brutal_button('NEW COMMAND', icon='add', color=theme.ACCENT_TEAL, on_click=lambda: open_editor())
+
+# --- 主内容区 ---
+with ui.element('div').classes('w-full max-w-6xl mx-auto px-4 pb-20'):
     
-    # 测试一下我们的卡片样式
-    st.markdown("""
-    <div class="cmd-card">
-        <h3>测试卡片</h3>
-        <p>如果你看到这个白色的带阴影的框框，说明 CSS 加载成功了！</p>
-    </div>
-    """, unsafe_allow_html=True)
+    @ui.refreshable
+    def render_grid(filter_text=""):
+        templates = db.get_templates()
+        
+        if not templates:
+            with ui.column().classes('w-full items-center py-20'):
+                ui.label('EMPTY_SYSTEM').classes('text-4xl font-black text-gray-400')
+                ui.label('Create your first protocol now.').classes('font-mono mt-2')
+            return
 
-elif menu == '标签工坊':
-    st.title("🏷️ 标签与分类工坊")
-    st.info("这里将展示高级的 Tag 管理看板... (下一阶段开发)")
+        # 瀑布流布局
+        with ui.grid().classes('grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8'):
+            
+            for tid, t in templates.items():
+                if filter_text and filter_text.lower() not in t['name'].lower(): continue
+                
+                # === 卡片本体 ===
+                with ui.card().style(theme.BRUTAL_CARD).classes('relative group hover:-translate-y-1 cursor-default'):
+                    
+                    # 装饰性标题栏
+                    with ui.row().classes('w-full border-b-2 border-black pb-2 mb-3 justify-between bg-yellow-50 -mx-4 -mt-4 px-4 pt-3 rounded-t-lg'):
+                        ui.label(t['name']).classes('font-bold text-lg font-mono')
+                        # 编辑按钮 (小)
+                        ui.button(icon='edit', on_click=lambda id=tid: open_editor(id)) \
+                            .props('flat dense round color=black size=sm')
 
-elif menu == '编辑器':
-    st.title("📝 模板编辑器")
-    st.info("这里将展示双栏编辑界面... (下一阶段开发)")
+                    # 描述
+                    ui.label(t.get('desc', '-')).classes('text-sm text-gray-600 mb-4 h-10 line-clamp-2')
+
+                    # 标签区
+                    with ui.row().classes('gap-2 mb-4'):
+                        # 随便搞点颜色逻辑，或者从tags里取
+                        ui.label('PROD').style('border: 1px solid black; background: #FB7185; box-shadow: 1px 1px 0 black;').classes('px-1 text-[10px] font-bold')
+                        ui.label('SSH').style('border: 1px solid black; background: #2DD4BF; box-shadow: 1px 1px 0 black;').classes('px-1 text-[10px] font-bold')
+
+                    # 底部大按钮
+                    brutal_button('EXECUTE', icon='play_arrow', color=theme.ACCENT_YELLOW, on_click=lambda id=tid: open_runner(id)) \
+                        .classes('w-full')
+
+    render_grid()
+    search_input.on('change', lambda e: render_grid.refresh(e.value))
 
 
-✅ 第一阶段检查点
-现在你的文件夹结构应该是这样的：
-cmd_generator/
-  ├── app.py
-  ├── assets/
-  │    └── style.css
-  ├── core/
-  │    ├── tag_manager.py
-  │    └── config_manager.py
-  └── data/ (这个可能是空的，运行程序后会自动生成文件)
+# =========================================
+# 弹窗逻辑 (Editor & Runner)
+# =========================================
 
-如何运行：
-你需要安装一个新的库 streamlit-antd-components (用于美化菜单)，请在终端运行：
-pip install streamlit streamlit-antd-components
+# --- 编辑器弹窗 ---
+def open_editor(tid=None):
+    is_edit = tid is not None
+    data = db.get_templates().get(tid, {}) if is_edit else {}
+    
+    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_CARD + "min-width: 600px; padding: 0;"):
+        # 弹窗头
+        with ui.row().classes('w-full bg-black p-4 justify-between items-center'):
+            ui.label('EDIT_PROTOCOL' if is_edit else 'NEW_PROTOCOL').classes('text-white font-mono font-bold text-xl')
+            ui.button(icon='close', on_click=dialog.close).props('flat dense color=white')
+        
+        # 弹窗体
+        with ui.column().classes('p-6 w-full gap-4'):
+            name = ui.input('NAME', value=data.get('name', '')).props('outlined dense').style(theme.BRUTAL_INPUT).classes('w-full')
+            desc = ui.input('DESCRIPTION', value=data.get('desc', '')).props('outlined dense').style(theme.BRUTAL_INPUT).classes('w-full')
+            
+            ui.label('TEMPLATE CODE (Jinja2)').classes('font-bold mt-2')
+            code = ui.textarea(value=data.get('template', '')).props('outlined dense').style(theme.BRUTAL_INPUT + "font-family: monospace;").classes('w-full bg-gray-50')
+            
+            # 简单参数定义 (暂时用文本解析，简化操作)
+            # 实际可以做更复杂的表格
+            ui.label('PARAMS (Format: name,label,default)').classes('font-bold mt-2 text-xs')
+            
+            # 辅助函数：把params列表转成字符串显示
+            def params_to_str(plist):
+                return "\n".join([f"{p['name']},{p.get('label','')},{p.get('default','')}" for p in plist])
+            
+            # 辅助函数：把字符串转回params列表
+            def str_to_params(text):
+                plist = []
+                for line in text.split('\n'):
+                    parts = line.split(',')
+                    if len(parts) >= 1 and parts[0].strip():
+                        plist.append({
+                            "name": parts[0].strip(),
+                            "label": parts[1].strip() if len(parts)>1 else parts[0],
+                            "default": parts[2].strip() if len(parts)>2 else "",
+                            "type": "text"
+                        })
+                return plist
 
-然后启动：
-streamlit run app.py
+            current_params_str = params_to_str(data.get('params', []))
+            params_input = ui.textarea(value=current_params_str).props('outlined dense placeholder="ip,Target IP,127.0.0.1"').style(theme.BRUTAL_INPUT).classes('w-full h-24')
 
-请尝试运行一下。 如果你能看到左侧漂亮的菜单，和右侧一个带阴影的“测试卡片”，说明地基打好了。
-如果成功，请回复“OK”，我们立刻进入第二阶段：开发那个看起来很高级的“Tag 标签工坊”。
+        # 底部栏
+        with ui.row().classes('p-4 w-full justify-end bg-gray-100 border-t-2 border-black'):
+            if is_edit:
+                # 删除按钮
+                def delete_curr():
+                    db.delete_template(tid)
+                    render_grid.refresh()
+                    dialog.close()
+                    ui.notify('DELETED', color='red')
+                ui.button('DELETE', on_click=delete_curr).props('flat color=red').classes('mr-auto')
+
+            def save():
+                if not name.value: return ui.notify('Name required', color='red')
+                
+                save_id = tid if is_edit else str(uuid.uuid4())[:8]
+                new_data = {
+                    "name": name.value,
+                    "desc": desc.value,
+                    "template": code.value,
+                    "params": str_to_params(params_input.value),
+                    "tags": data.get('tags', []) # 暂时保留旧tags
+                }
+                db.save_template(save_id, new_data)
+                render_grid.refresh()
+                dialog.close()
+                ui.notify('SAVED', type='positive', color='black')
+
+            brutal_button('SAVE CHANGES', color=theme.PRIMARY, on_click=save).classes('text-white')
+
+    dialog.open()
+
+# --- 运行器弹窗 ---
+def open_runner(tid):
+    data = db.get_templates().get(tid)
+    if not data: return
+
+    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_CARD + "min-width: 500px; padding: 0;"):
+        with ui.row().classes('w-full bg-yellow-400 p-4 border-b-2 border-black items-center justify-between'):
+            ui.label(f">> RUN: {data['name']}").classes('font-mono font-black text-xl')
+            ui.icon('terminal', size='sm')
+
+        inputs = {}
+        with ui.column().classes('p-6 w-full gap-4'):
+            for p in data.get('params', []):
+                inputs[p['name']] = ui.input(p.get('label', p['name']), value=p.get('default', '')) \
+                    .props('outlined dense').style(theme.BRUTAL_INPUT).classes('w-full')
+            
+            res_area = ui.code('READY_TO_GENERATE...').classes('w-full p-4 border-2 border-black bg-black text-green-400 font-mono rounded')
+
+            def run():
+                try:
+                    pvals = {k: v.value for k,v in inputs.items()}
+                    cmd = db.render_command(data.get('template',''), pvals)
+                    res_area.content = cmd
+                    ui.clipboard.write(cmd)
+                    ui.notify('COPIED TO CLIPBOARD', color='black')
+                except Exception as e:
+                    ui.notify(str(e), color='red')
+            
+            brutal_button('GENERATE & COPY', icon='bolt', color=theme.ACCENT_TEAL, on_click=run).classes('w-full mt-2')
+
+    dialog.open()
+
+ui.run(title="CMD_NEXUS", native=True, window_size=(1000, 800), reload=False)
+
+🚀 启动指南
+ * 保存这两个文件。
+ * 确保 logic.py 还在（如果不在了就用上一条回复里的）。
+ * 运行：
+   python main.py
+
+你应该会看到：
+ * 白底黑边的硬朗界面。
+ * 背景有点阵纹理。
+ * 按钮是亮黄色、亮紫色，而且有粗黑的边框。
+ * 点击按钮时，它会真的**“按下去”**（消失掉阴影，位移）。
+ * 左上角的 LOGO 像是贴纸一样拼接的。
+这套界面既有**“工业朋克”的粗糙感，又符合现代审美的“新潮”**感，而且操作逻辑非常清晰（所见即所得）。
+快去试试，新建几个命令，填入：
+ * Name: Deploy to Prod
+ * Params: version,Image Version,v1.0.0 (注意这行的格式：英文名,中文名,默认值)
+ * Template: docker run my-app:{{ version }}
+看看那个卡片和弹窗的效果，是不是很酷？
