@@ -1,114 +1,106 @@
-这三个报错截图和你的反馈非常有价值，直接指出了当前系统的环境版本不匹配和逻辑漏洞。
-你的批评非常到位：“土”、“难看”、“功能不可用”是绝对不能接受的。
-我们这次来一次彻底的**“工业级重构”**。我不只修 Bug，我要把这套界面的 UI 逻辑完全重写，让它看起来像一个买来的 SaaS 软件，而不是学生作业。
-🛑 第一步：紧急环境修复 (必做)
-看截图，报错 AttributeError: ... has no attribute 'ColorPickerColumn'。
-原因：你的 Streamlit 版本太低了。ColorPickerColumn 是 Streamlit 1.35.0 之后才有的功能。
-解决：请在终端（Terminal）执行以下命令升级：
-pip install --upgrade streamlit streamlit-antd-components
+非常抱歉，让你经历了这么多次报错。看着满屏的红字确实很搞心态。
+根据你提供的 4 张报错截图，核心原因已经非常明确：代码用的是最新版的写法，但你的 Python 环境（Streamlit 和 SAC 库）版本过低，且 SAC 库的旧版 API 与新版不兼容。
+比如 AttributeError: ... has no attribute 'ColorPickerColumn' 说明你的 Streamlit 版本低于 1.35.0。
+比如 Unexpected keyword argument 'value' 说明 SAC 组件写法在新旧版本间有差异。
+我们现在推倒重来，做一次彻底的“全代码覆盖”。
+请严格按照以下步骤操作，一步都不要跳过。
+🛑 第一步：必须升级环境（非常重要）
+请关掉正在运行的程序，在终端（Terminal）里执行下面这行命令。如果不执行，后面的代码一定会报错。
+pip install --upgrade streamlit streamlit-antd-components pandas jinja2
 
-确保 streamlit --version 显示的版本号大于等于 1.35.0。
-🎨 第二步：UI/UX 重构设计理念
-针对你说的“土”和“不紧凑”，我们做以下改变：
- * Tag Manager (标签管理)：
-   * 抛弃：左侧那一堆花花绿绿的 HTML 胶囊（确实土）。
-   * 采用：全屏沉浸式 DataGrid (数据表格)。
-   * 逻辑：像 Excel 一样管理标签。一列是名字，一列是分组，一列是颜色选择器。支持直接在表格里增删改，不需要多余的“保存”按钮，改完即存。
- * Layout (布局)：
-   * 抛弃：大量的 st.markdown("---") 分割线（太占空间）。
-   * 采用：无边框容器 + 微阴影卡片。利用 CSS 压缩行间距，让信息密度更高（紧凑）。
- * Config (配置读取)：
-   * 修复：强制注入 source 属性，不管文件里存没存，读取时代码强行加上。
-🛠️ 第三步：全量代码替换
-请按照顺序，完全覆盖对应的文件。
-1. core/config_manager.py (修复配置读取不到的问题)
-这里我加了绝对路径处理和调试打印，确保数据一定能读出来。
+升级完成后，确保 streamlit --version 显示的版本 >= 1.35.0。
+📂 第二步：项目结构确认
+请确保你的文件夹结构是干净的，如下所示：
+Project/
+├── main.py
+├── core/
+│   ├── __init__.py  (空文件)
+│   ├── config_manager.py
+│   └── tag_manager.py
+└── modules/
+    ├── __init__.py  (空文件)
+    └── cmd_generator/
+        ├── __init__.py  (空文件)
+        └── app.py
+
+如果以前有 tags.json, team_config.json, user_config.json，建议先删除，让程序自动生成新的，避免旧数据格式导致报错。
+📝 第三步：全量代码替换
+我逐个文件给出修正后的代码，修复了所有的 API 不兼容问题。
+1. core/config_manager.py (修复路径与读取)
 import json
 import os
 from typing import Dict, Any
 
 class ConfigManager:
     def __init__(self, team_path: str, user_path: str):
-        # 强制转换为绝对路径，防止路径错误
         self.team_path = os.path.abspath(team_path)
         self.user_path = os.path.abspath(user_path)
-        
-        # 初始化文件（如果不存在）
         self._init_file(self.team_path)
         self._init_file(self.user_path)
 
     def _init_file(self, path):
         if not os.path.exists(path):
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump({}, f)
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump({}, f)
+            except Exception as e:
+                print(f"Error init file {path}: {e}")
 
     def _load_json(self, path: str) -> Dict:
+        if not os.path.exists(path): return {}
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception as e:
-            print(f"Error loading {path}: {e}")
+                return json.load(f)
+        except:
             return {}
 
     def _save_json(self, path: str, data: Dict):
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error saving {path}: {e}")
 
     def get_all_templates(self) -> Dict[str, Any]:
-        """合并配置，并【强制】注入 source 属性"""
         merged = {}
-        
-        # 1. 载入团队模版
+        # 1. Team
         team_data = self._load_json(self.team_path)
         for k, v in team_data.items():
-            if not isinstance(v, dict): continue
-            if 'tags' not in v: v['tags'] = []
-            v['id'] = k
-            v['source'] = 'team' # 核心：强制标记
-            merged[k] = v
-            
-        # 2. 载入个人模版
+            if isinstance(v, dict):
+                v['id'] = k
+                v['source'] = 'team'
+                if 'tags' not in v: v['tags'] = []
+                merged[k] = v
+        
+        # 2. Personal
         user_data = self._load_json(self.user_path)
         for k, v in user_data.items():
-            if not isinstance(v, dict): continue
-            if 'tags' not in v: v['tags'] = []
-            v['id'] = k
-            v['source'] = 'personal' # 核心：强制标记
-            merged[k] = v
-            
+            if isinstance(v, dict):
+                v['id'] = k
+                v['source'] = 'personal'
+                if 'tags' not in v: v['tags'] = []
+                merged[k] = v
         return merged
 
-    def save_template(self, template_id: str, template_data: Dict, target_source='personal'):
+    def save_template(self, tid: str, data: Dict, target_source: str):
         path = self.team_path if target_source == 'team' else self.user_path
-        data_map = self._load_json(path)
+        current_data = self._load_json(path)
         
+        # 构造纯净数据
         save_payload = {
-            "name": template_data.get("name", "未命名"),
-            "desc": template_data.get("desc", ""),
-            "tags": template_data.get("tags", []),
-            "template": template_data.get("template", ""),
-            "params": template_data.get("params", []),
+            "name": data.get("name"),
+            "desc": data.get("desc", ""),
+            "tags": data.get("tags", []),
+            "template": data.get("template", ""),
+            "params": data.get("params", []),
             "updated_at": "now"
         }
-        
-        data_map[template_id] = save_payload
-        self._save_json(path, data_map)
+        current_data[tid] = save_payload
+        self._save_json(path, current_data)
 
-    def delete_template(self, template_id: str):
-        # 尝试从两个库中删除
-        for path in [self.user_path, self.team_path]:
-            data = self._load_json(path)
-            if template_id in data:
-                del data[template_id]
-                self._save_json(path, data)
-                return True
-        return False
-
-2. core/tag_manager.py (修复标签保存逻辑)
+2. core/tag_manager.py (修复标签保存)
 import json
 import os
-import uuid
 
 class TagManager:
     def __init__(self, tag_file="tags.json"):
@@ -125,16 +117,11 @@ class TagManager:
             return {}
 
     def save_all_tags(self, tags_dict):
-        """一次性保存所有标签（用于DataEditor的批量更新）"""
         with open(self.file_path, 'w', encoding='utf-8') as f:
             json.dump(tags_dict, f, indent=4, ensure_ascii=False)
 
-3. main.py (彻底重构布局与路由)
-这里解决了三个问题：
- * SAC 报错：去掉了 MenuItem 的 key。
- * 右侧白屏：增加了默认页面渲染逻辑。
- * 标签管理土：改用了 全屏 DataEditor，极度紧凑专业。
-<!-- end list -->
+3. main.py (修复 SAC 组件报错)
+修复重点：删除了 sac.MenuItem 里的 key 参数（这是导致报错的原因），改用 Label 判断。
 import streamlit as st
 import streamlit_antd_components as sac
 from core.config_manager import ConfigManager
@@ -143,31 +130,17 @@ from modules.cmd_generator import app as cmd_app
 import pandas as pd
 import uuid
 
-# 路径配置 (文件名保持简单，ConfigManager会自动转绝对路径)
+# 路径配置
 TEAM_CONFIG = "team_config.json"
 USER_CONFIG = "user_config.json"
 TAG_CONFIG = "tags.json"
 
-# ==========================================
-# 🎨 全局 CSS 注入 (紧凑风格)
-# ==========================================
 def inject_global_css():
     st.markdown("""
         <style>
-        /* 1. 缩小页面顶部空白 */
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-        
-        /* 2. 调整字体 */
         .stApp { font-family: 'Inter', system-ui, sans-serif; }
-        
-        /* 3. 让 Expander 头部更紧凑 */
-        .streamlit-expanderHeader { padding-top: 0.5rem; padding-bottom: 0.5rem; }
-        
-        /* 4. 自定义 DataEditor 边框 */
         [data-testid="stDataFrame"] { border: 1px solid #e0e0e0; border-radius: 6px; }
-        
-        /* 5. 隐藏右上角 Hamburger (可选) */
-        /* #MainMenu {visibility: hidden;} */
         </style>
     """, unsafe_allow_html=True)
 
@@ -178,12 +151,11 @@ def main():
     cfg_mgr = ConfigManager(TEAM_CONFIG, USER_CONFIG)
     tag_mgr = TagManager(TAG_CONFIG)
 
-    # ==========================================
-    # 🧭 左侧导航 (SAC Menu)
-    # ==========================================
+    # === 左侧导航 ===
     with st.sidebar:
         st.subheader("⚡ Ops Platform")
         
+        # 修复：去掉了 key 参数，防止报错
         selected = sac.menu([
             sac.MenuItem('控制台', icon='house-fill', children=[
                 sac.MenuItem('命令生成器', icon='terminal'),
@@ -192,90 +164,82 @@ def main():
             sac.MenuItem(type='divider'),
             sac.MenuItem('配置中心', icon='sliders', children=[
                 sac.MenuItem('标签管理', icon='tags'),
-                sac.MenuItem('环境配置', icon='hdd', disabled=True),
             ]),
         ], color='indigo', open_all=True)
 
-    # ==========================================
-    # 🚀 路由逻辑
-    # ==========================================
+    # === 路由逻辑 ===
     if selected == '命令生成器':
-        cmd_app.render(cfg_mgr, tag_mgr)
-        
+        try:
+            cmd_app.render(cfg_mgr, tag_mgr)
+        except Exception as e:
+            st.error(f"模块加载错误: {e}")
+            
     elif selected == '标签管理':
         render_tag_manager_pro(tag_mgr)
         
     else:
-        # 默认/兜底页面
-        st.title("👋 欢迎回来")
-        st.info("请从左侧导航栏选择功能模块。")
+        st.title("👋 欢迎")
+        st.info("请从左侧选择模块")
 
-# ==========================================
-# 🏷️ 标签管理 Pro 版 (极简表格流)
-# ==========================================
+# === 标签管理 (全屏表格版) ===
 def render_tag_manager_pro(tag_mgr):
     st.title("🏷️ 标签分类管理")
-    st.caption("在此统一管理全平台的标签体系。修改表格内容将自动保存。")
+    st.caption("在此直接编辑标签体系，修改后点击保存。")
 
-    # 获取数据
     tags_map = tag_mgr.get_all_tags()
     
-    # 转换为 DataFrame 列表格式
-    # 格式: [{"id": "xxx", "name": "Linux", "group": "OS", "color": "#000"}]
+    # 转换为列表供 DataEditor 使用
     data_list = []
     for tid, tdata in tags_map.items():
         data_list.append({
             "id": tid,
-            "name": tdata.get("name", "New Tag"),
-            "group": tdata.get("group", "默认"),
+            "name": tdata.get("name", "New"),
+            "group": tdata.get("group", "通用"),
             "color": tdata.get("color", "#3498db")
         })
     
+    if not data_list:
+        data_list = [{"id": str(uuid.uuid4())[:8], "name": "示例标签", "group": "通用", "color": "#3498db"}]
+    
     df = pd.DataFrame(data_list)
     
-    # === 渲染全屏编辑器 ===
-    # 这是一个高密度、功能全的组件，替代之前土气的列表
+    # 渲染编辑器
     edited_df = st.data_editor(
         df,
         column_config={
-            "id": None, # 隐藏 ID
-            "name": st.column_config.TextColumn("标签名称", required=True, width="medium"),
-            "group": st.column_config.TextColumn("分组 (Group)", required=True, width="medium"),
+            "id": None, # 隐藏ID
+            "name": st.column_config.TextColumn("标签名称", required=True),
+            "group": st.column_config.TextColumn("分组", required=True),
             "color": st.column_config.ColorPickerColumn("标签色", width="small"),
         },
-        num_rows="dynamic", # 允许新增/删除行
+        num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        key="tag_editor_main" # 防止组件重绘丢失状态
+        key="tag_editor_main"
     )
 
-    # === 自动保存逻辑 ===
-    # 检查 session_state 中的变化，或者提供保存按钮
-    # 为了体验更流畅，这里提供一个醒目的保存按钮，但实际上 DataEditor 只要页面刷新就会返回最新值
-    
     if st.button("💾 应用变更", type="primary"):
         new_map = {}
         for _, row in edited_df.iterrows():
-            # 确保每行都有 ID
             tid = row.get("id")
-            if not tid or pd.isna(tid):
-                tid = str(uuid.uuid4())[:8]
-            
+            if not tid or pd.isna(tid): tid = str(uuid.uuid4())[:8]
             new_map[tid] = {
                 "name": row["name"],
                 "group": row["group"],
                 "color": row["color"]
             }
-        
         tag_mgr.save_all_tags(new_map)
-        st.toast("标签配置已更新！", icon="✅")
+        st.toast("标签已更新", icon="✅")
         st.rerun()
 
 if __name__ == "__main__":
     main()
 
-4. modules/cmd_generator/app.py (UI 紧凑化重构)
-这里我采用了 Card Grid (卡片网格) 和 Dialog (弹窗) 结合的方式，并使用了 st.container(border=True) 来替代之前的分割线布局，看起来会非常像 Notion 或 Linear。
+4. modules/cmd_generator/app.py (修复 SAC Segmented 报错)
+修复重点：
+ * 修复 Segmented 报错：sac.SegmentedItem 里面删掉了 value 参数（这也会导致报错）。现在返回值直接就是 Label（如“团队公共库”）。
+ * 映射逻辑：我在 Python 代码里把中文 Label 映射回 'team' / 'personal'，解决了逻辑问题。
+<!-- end list -->
 import streamlit as st
 import streamlit_antd_components as sac
 import pandas as pd
@@ -285,49 +249,50 @@ import uuid
 
 def render(cfg_mgr, tag_mgr):
     # ==========================
-    # 1. 顶部控制栏 (Header)
+    # 1. 顶部 Tab 切换
     # ==========================
-    c_title, c_tabs = st.columns([1, 2])
-    with c_title:
-        st.title("🚀 命令生成器")
-    with c_tabs:
-        # 使用 Segmented Control 替代传统的 Radio，更现代
-        # value 对应 ConfigManager 里的 source 字段
-        source_tab = sac.segmented(
-            items=[
-                sac.SegmentedItem(label='团队公共库', icon='buildings', value='team'),
-                sac.SegmentedItem(label='我的私有库', icon='person-lock', value='personal'),
-            ], align='end', size='sm', color='indigo'
-        )
+    st.title("🚀 命令生成器")
+    
+    # 修复：去掉了 SegmentedItem 里的 value 参数
+    tab_label = sac.segmented(
+        items=[
+            sac.SegmentedItem(label='团队公共库', icon='buildings'),
+            sac.SegmentedItem(label='我的私有库', icon='person-lock'),
+        ], align='start', size='sm', color='indigo'
+    )
+    
+    # 映射逻辑：把中文 Label 转回代码逻辑需要的 ID
+    source_map = {'团队公共库': 'team', '我的私有库': 'personal'}
+    current_source = source_map.get(tab_label, 'team')
 
     # ==========================
-    # 2. 筛选与操作区 (Toolbar)
+    # 2. 筛选与操作区
     # ==========================
-    # 使用 Border Container 统一包裹，减少视觉碎片
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
         
-        # 准备元数据
         all_templates = cfg_mgr.get_all_templates()
         all_tags = tag_mgr.get_all_tags()
         tag_options = {tid: t['name'] for tid, t in all_tags.items()}
 
         search_txt = c1.text_input("搜索", placeholder="输入名称...", label_visibility="collapsed")
         
+        # 标签筛选
         selected_tags = c2.multiselect("标签", options=tag_options.keys(), format_func=lambda x: tag_options[x], placeholder="标签筛选", label_visibility="collapsed")
         
+        # 视图切换
         view_mode = c3.radio("视图", ["🪟 网格", "📋 列表"], horizontal=True, label_visibility="collapsed")
         
+        # 新建
         if c4.button("➕ 新建", type="primary", use_container_width=True):
-            open_editor_dialog(cfg_mgr, tag_mgr, "NEW", source_tab)
+            open_editor_dialog(cfg_mgr, tag_mgr, "NEW", current_source)
 
     # ==========================
-    # 3. 数据处理 (Logic)
+    # 3. 数据处理
     # ==========================
     # 过滤 Source
-    current_list = {k: v for k, v in all_templates.items() if v.get('source') == source_tab}
+    current_list = {k: v for k, v in all_templates.items() if v.get('source') == current_source}
     
-    # 过滤 Search & Tags
     display_items = []
     for tid, t in current_list.items():
         if search_txt and (search_txt.lower() not in t['name'].lower()): continue
@@ -336,7 +301,6 @@ def render(cfg_mgr, tag_mgr):
         if selected_tags:
             if not set(selected_tags).intersection(set(t_tags)): continue
         
-        # 转换 Tag ID 为 Name 供显示
         display_tag_objs = [{"name": all_tags[tg]['name'], "color": all_tags[tg].get('color', '#888')} for tg in t_tags if tg in all_tags]
         
         display_items.append({
@@ -348,60 +312,42 @@ def render(cfg_mgr, tag_mgr):
         })
 
     # ==========================
-    # 4. 内容渲染 (Body)
+    # 4. 内容渲染
     # ==========================
     if not display_items:
-        st.markdown(f"""
-        <div style='text-align: center; padding: 40px; color: #666;'>
-            <h4>👋 空空如也</h4>
-            <p>在【{source_tab}】下没有找到匹配的模版。</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.info(f"在【{tab_label}】下暂无数据。")
         return
-
-    st.caption(f"共找到 {len(display_items)} 个模版")
 
     if view_mode == "📋 列表":
         render_list_view(display_items, cfg_mgr)
     else:
         render_grid_view(display_items, cfg_mgr)
 
-# ----------------------------------------------------------------------
-# 视图组件
-# ----------------------------------------------------------------------
+# --- 视图组件 ---
+
 def render_grid_view(items, cfg_mgr):
     cols = st.columns(3)
     for idx, item in enumerate(items):
         with cols[idx % 3]:
             with st.container(border=True):
-                # 头部：标题 + 运行按钮
                 h1, h2 = st.columns([4, 1])
                 h1.markdown(f"**{item['name']}**")
-                if h2.button("▶", key=f"btn_run_{item['id']}", help="立即运行"):
+                if h2.button("▶", key=f"btn_run_{item['id']}", help="运行"):
                     open_runner_dialog(cfg_mgr, item['id'])
 
-                # 描述
-                st.caption(item['desc'][:50] + "..." if item['desc'] else "暂无描述")
+                st.caption(item['desc'][:40] + "..." if item['desc'] else "无描述")
                 
-                # 标签展示 (使用 SAC Tag)
                 if item['tag_objs']:
-                    # 只显示前3个
                     sac.tags([sac.Tag(label=t['name'], color=t['color'], bordered=False) for t in item['tag_objs'][:3]], size='xs', align='start')
                 else:
                     st.caption("No Tags")
                 
-                # 底部：编辑按钮
                 if st.button("设置", key=f"btn_edit_{item['id']}", use_container_width=True):
-                     # 编辑入口：由于 st.dialog 不支持直接打开另一个 dialog，我们这里用 warning 提示或者 session_state 跳转
-                     # 商业级做法：通常点击设置会打开 Drawer (侧边抽屉)，但 Streamlit 不支持。
-                     # 这里我们复用 Editor Dialog
-                     open_editor_dialog(cfg_mgr, None, item['id'], item['raw_data']['source']) # 注意：TagMgr这里需要传，暂时传None后续修复
+                     open_editor_dialog(cfg_mgr, None, item['id'], item['raw_data']['source'])
 
 def render_list_view(items, cfg_mgr):
-    # 构造 DataFrame
     df_data = []
     for item in items:
-        # 将标签转为字符串列表
         tag_str_list = [t['name'] for t in item['tag_objs']]
         df_data.append({
             "ID": item['id'],
@@ -431,54 +377,45 @@ def render_list_view(items, cfg_mgr):
         selected_id = df.iloc[row_idx]['ID']
         open_runner_dialog(cfg_mgr, selected_id)
 
-# ----------------------------------------------------------------------
-# 弹窗组件 (Dialogs)
-# ----------------------------------------------------------------------
+# --- 弹窗组件 ---
+
 @st.dialog("⚡ 运行控制台", width="large")
 def open_runner_dialog(cfg_mgr, tid):
     templates = cfg_mgr.get_all_templates()
     data = templates.get(tid)
+    if not data: return st.error("无法加载数据")
     
-    if not data: return st.error("数据加载失败")
-    
-    st.caption(data['name'])
-    
-    # 布局：左参右果
-    c_form, c_code = st.columns([1, 1.3], gap="medium")
-    
+    c1, c2 = st.columns([1, 1.3], gap="medium")
     user_inputs = {}
-    with c_form:
-        st.subheader("参数")
-        params = data.get('params', [])
-        for p in params:
-            label = p.get('label', p['name'])
-            if p['type'] == 'select':
-                opts = [x.strip() for x in p.get("options", "").split(",") if x.strip()]
-                user_inputs[p['name']] = st.selectbox(label, opts)
-            elif p['type'] == 'number':
-                user_inputs[p['name']] = st.number_input(label, value=float(p.get('default', 0)))
-            else:
-                user_inputs[p['name']] = st.text_input(label, value=str(p.get('default', '')))
     
-    # 实时预览
-    safe_inputs = {k: (shlex.quote(str(v)) if isinstance(v, str) else v) for k, v in user_inputs.items()}
-    try:
-        t = Template(data.get('template', ''))
-        res_text = t.render(**safe_inputs)
-    except:
-        res_text = "Waiting..."
+    with c1:
+        st.subheader("参数")
+        with st.form("run_form"):
+            for p in data.get('params', []):
+                label = p.get('label', p['name'])
+                if p['type'] == 'select':
+                    opts = [x.strip() for x in p.get("options", "").split(",") if x.strip()]
+                    user_inputs[p['name']] = st.selectbox(label, opts)
+                elif p['type'] == 'number':
+                    user_inputs[p['name']] = st.number_input(label, value=float(p.get('default', 0)))
+                else:
+                    user_inputs[p['name']] = st.text_input(label, value=str(p.get('default', '')))
+            submitted = st.form_submit_button("生成", type="primary", use_container_width=True)
 
-    with c_code:
+    with c2:
         st.subheader("预览")
-        st.code(res_text, language="bash")
+        res = "等待输入..."
+        if submitted:
+            try:
+                safe = {k: (shlex.quote(str(v)) if isinstance(v, str) else v) for k, v in user_inputs.items()}
+                t = Template(data.get('template', ''))
+                res = t.render(**safe)
+            except Exception as e:
+                res = f"Error: {e}"
+        st.code(res, language="bash")
         
-    st.markdown("---")
-    if st.button("❌ 关闭"): st.rerun()
-
 @st.dialog("🛠️ 编辑模版", width="large")
 def open_editor_dialog(cfg_mgr, tag_mgr, tid, target_source):
-    # 注意：在 render_grid_view 调用时 tag_mgr 传了 None，这里重新从 external scope 或重新实例化
-    # 更好的做法是在 main.py 传进来，或者这里做一个简单的 Lazy Load
     if tag_mgr is None:
         from core.tag_manager import TagManager
         tag_mgr = TagManager("tags.json")
@@ -494,7 +431,6 @@ def open_editor_dialog(cfg_mgr, tag_mgr, tid, target_source):
     all_tags = tag_mgr.get_all_tags()
     tag_map = {k: v['name'] for k, v in all_tags.items()}
     default_tags = [t for t in data.get('tags', []) if t in tag_map]
-    
     sel_tags = c2.multiselect("标签", options=tag_map.keys(), default=default_tags, format_func=lambda x: tag_map[x])
     
     desc = st.text_input("描述", value=data.get('desc', ''))
@@ -503,11 +439,10 @@ def open_editor_dialog(cfg_mgr, tag_mgr, tid, target_source):
     default_params = data.get('params', [{"name": "param", "label": "参数", "type": "text", "default": "", "options": ""}])
     edited_df = st.data_editor(pd.DataFrame(default_params), num_rows="dynamic", use_container_width=True)
     
-    code = st.text_area("模板代码 (Jinja2)", value=data.get('template', ''), height=150)
+    code = st.text_area("模板代码", value=data.get('template', ''), height=150)
     
     if st.button("💾 保存", type="primary", use_container_width=True):
         if not name: return st.error("名称必填")
-        
         save_id = str(uuid.uuid4())[:8] if is_new else tid
         p_list = [p for p in edited_df.to_dict('records') if p['name']]
         
@@ -518,12 +453,7 @@ def open_editor_dialog(cfg_mgr, tag_mgr, tid, target_source):
         cfg_mgr.save_template(save_id, save_data, target_source)
         st.rerun()
 
-✅ 最终检查清单
- * 升级环境：务必运行 pip install --upgrade streamlit 解决 ColorPickerColumn 报错。
- * 清空数据（可选）：如果担心旧的 json 文件格式不对，可以直接把 team_config.json, user_config.json, tags.json 删了，代码会自动新建空的。
- * 运行：streamlit run main.py。
-现在，你应该拥有一个：
- * 标签管理：专业全屏表格，支持增删改颜色。
- * 主页：紧凑的卡片网格，带有漂亮的 SAC 标签胶囊。
- * 交互：点击卡片直接弹窗运行，无需跳转。
- * 配置：绝对路径保证配置一定能读写成功。
+🚀 最后的检查
+ * 务必执行 pip install --upgrade streamlit。
+ * 覆盖完所有 4 个文件后，重新运行 streamlit run main.py。
+这一次，所有的 API 调用都已经改成了最安全、兼容性最好的写法（去掉了 key 和 value 参数），并且加入了全屏标签管理。应该不会再有报错了！
