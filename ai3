@@ -1,0 +1,207 @@
+非常好，进度条已经走了 50%！
+现在进入 第三阶段：编写“📝 智能编辑器 (Smart Editor)”。
+这是你之前吐槽最狠的地方——“填空题式”的体验。这次我们要彻底革新，做成 左侧写代码，右侧实时看效果 的分屏模式。
+第一步：理解“分屏预览”逻辑
+我们要实现一个核心功能：当你在左边定义变量（比如 ip_address）和模板（ping {{ ip_address }}）时，右边会自动模拟生成一个命令 ping 192.168.1.1，让你知道自己写对了没。
+第二步：编写编辑器代码
+文件路径：views/editor.py
+操作：在 views 文件夹里新建 editor.py，粘贴以下代码。
+⚠️ 注意：这段代码稍微有点长，因为它包含了很多交互逻辑（比如参数表格的编辑、实时渲染的容错处理），请完整复制。
+# views/editor.py
+import streamlit as st
+import pandas as pd
+import uuid
+import time
+from jinja2 import Template
+from core.config_manager import ConfigManager
+from core.tag_manager import TagManager
+
+# 定义参数表格的默认结构
+DEFAULT_PARAMS = [
+    {"name": "target", "label": "目标IP", "type": "text", "default": "127.0.0.1", "options": ""},
+    {"name": "port",   "label": "端口号", "type": "text", "default": "8080",      "options": ""},
+]
+
+def render_editor():
+    # 1. 初始化管理器
+    cfg_mgr = ConfigManager()
+    tag_mgr = TagManager()
+
+    # --- 获取状态 (是从控制台点进来的编辑模式，还是新建模式？) ---
+    # 我们使用 session_state 来传递“当前要编辑谁”
+    current_tid = st.session_state.get("edit_target_id", None) 
+    is_edit_mode = current_tid is not None
+
+    # 加载数据 (如果是编辑模式，读旧数据；否则由空数据开始)
+    if is_edit_mode:
+        saved_data = cfg_mgr.get_all_templates().get(current_tid, {})
+        page_title = f"📝 编辑模板: {saved_data.get('name')}"
+    else:
+        saved_data = {}
+        page_title = "✨ 创建新命令模板"
+
+    st.markdown(f"## {page_title}")
+    
+    # --- 顶部工具栏 ---
+    if is_edit_mode:
+        if st.button("⬅️ 返回新建模式 (Clear)", type="secondary"):
+            st.session_state["edit_target_id"] = None
+            st.rerun()
+
+    # --- 核心布局：左右分栏 ---
+    col_conf, col_prev = st.columns([1.2, 1])
+
+    with col_conf:
+        with st.container(border=True):
+            st.subheader("1. 基础信息")
+            name = st.text_input("命令名称", value=saved_data.get('name', ''), placeholder="例如: Check Nginx Log")
+            desc = st.text_area("描述 (支持Markdown)", value=saved_data.get('desc', ''), height=68, placeholder="描述这个命令是干嘛的...")
+
+            # --- Tag 选择器 (使用之前的逻辑) ---
+            all_tags = tag_mgr.get_all_tags()
+            # 制作显示标签： "Database: MySQL"
+            tag_options = {tid: f"{t['category']}: {t['name']}" for tid, t in all_tags.items()}
+            
+            # 恢复已保存的 tags
+            default_tags = [t for t in saved_data.get('tags', []) if t in tag_options]
+            
+            sel_tags = st.multiselect(
+                "关联标签",
+                options=tag_options.keys(),
+                default=default_tags,
+                format_func=lambda x: tag_options[x],
+                placeholder="选择标签方便后续筛选..."
+            )
+
+            st.divider()
+            
+            # --- 参数配置 (这是难点，我们用表格) ---
+            st.subheader("2. 变量定义 (Parameters)")
+            st.info("💡 定义变量后，在下方的模板代码中用 `{{ 变量名 }}` 引用")
+            
+            # 准备表格数据
+            raw_params = saved_data.get('params', DEFAULT_PARAMS)
+            df_params = pd.DataFrame(raw_params)
+            
+            # 使用 data_editor 让用户像 Excel 一样填参数
+            edited_df = st.data_editor(
+                df_params,
+                num_rows="dynamic", # 允许添加/删除行
+                use_container_width=True,
+                column_config={
+                    "name": st.column_config.TextColumn("变量名 (必填)", help="模板中引用的英文名，如 ip"),
+                    "label": st.column_config.TextColumn("显示名称", help="也就是运行界面看到的中文提示"),
+                    "type": st.column_config.SelectboxColumn("类型", options=["text", "select", "password"], required=True),
+                    "default": st.column_config.TextColumn("默认值", help="预览时也会用到这个值"),
+                    "options": st.column_config.TextColumn("选项 (逗号隔开)", help="只有类型选 select 时才有效，如: dev,prod")
+                },
+                key="editor_params_table"
+            )
+
+            st.divider()
+
+            # --- 模板代码区 ---
+            st.subheader("3. 命令模板 (Jinja2)")
+            template_code = st.text_area(
+                "Code Template", 
+                value=saved_data.get('template', 'ping {{ target }} -p {{ port }}'),
+                height=200,
+                help="支持 Jinja2 语法"
+            )
+
+    # === 右侧：实时编译预览 ===
+    with col_prev:
+        st.markdown("### 👁️ 效果预览")
+        st.markdown('<div class="cmd-card">', unsafe_allow_html=True)
+        
+        # 1. 提取变量
+        # 把表格里的数据转回字典，用于渲染
+        try:
+            # 过滤掉空的变量名
+            valid_params = [row for row in edited_df.to_dict('records') if row.get('name')]
+            
+            # 构造模拟数据字典 (用默认值来填充)
+            dummy_context = { row['name']: row['default'] for row in valid_params }
+            
+            st.caption("当前变量值 (Based on Defaults):")
+            st.json(dummy_context, expanded=False)
+            
+            st.markdown("---")
+            st.caption("生成结果:")
+
+            # 2. 尝试渲染
+            if template_code:
+                t = Template(template_code)
+                rendered_result = t.render(**dummy_context)
+                
+                # 显示高亮代码
+                st.code(rendered_result, language="bash")
+            else:
+                st.info("等待输入模板...")
+
+        except Exception as e:
+            st.error(f"🚫 模板渲染出错: {e}")
+            st.caption("请检查变量名是否在上方定义，拼写是否一致。")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # === 保存操作区 ===
+        st.markdown("### 💾 保存")
+        source_type = st.radio("归档类型", ["Team", "Personal"], horizontal=True, index=0 if saved_data.get('source')=='team' else 1)
+        
+        if st.button("确认保存模板", type="primary", use_container_width=True):
+            if not name:
+                st.toast("⚠️ 必须填写命令名称！", icon="❌")
+            elif not template_code:
+                st.toast("⚠️ 模板不能为空！", icon="❌")
+            else:
+                # 构造要保存的数据包
+                save_source = source_type.lower()
+                final_params = [row for row in edited_df.to_dict('records') if row.get('name')]
+                
+                new_data = {
+                    "name": name,
+                    "desc": desc,
+                    "tags": sel_tags,
+                    "params": final_params,
+                    "template": template_code
+                }
+                
+                # 决定 ID (新建生成UUID，编辑保持原样)
+                save_id = current_tid if is_edit_mode else str(uuid.uuid4())[:8]
+                
+                cfg_mgr.save_template(save_id, new_data, save_source)
+                
+                st.balloons()
+                st.toast(f"✅ 模板 [{name}] 保存成功！", icon="💾")
+                time.sleep(1)
+                
+                # 保存完如果是新建模式，重置页面
+                if not is_edit_mode:
+                    st.rerun()
+
+
+第三步：连接主程序
+同样，我们需要去 app.py 注册这个页面。
+操作：打开 app.py，找到 elif menu == '编辑器': 这一段，替换为：
+# app.py 中需要修改的部分
+
+elif menu == '编辑器':
+    from views.editor import render_editor
+    render_editor()
+
+🚀 验证时刻
+去点击左侧菜单的【编辑器】。
+请尝试以下“高级操作”来体验它的实用性：
+ * 参数定义：在表格里，第一行 name 填 env，label 填 环境，type 选 select，options 填 prod,dev。
+ * 写模板：在下方的代码框输入 echo "Current env is {{ env }}"。
+ * 看右边：你会发现右边立刻显示了 echo "Current env is prod"（因为它读取了默认值）。
+ * 改默认值：回过头去表格里把 default 改成 dev，右边代码瞬间变成 dev。
+这就是我要给你的“所见即所得”体验。不再需要像以前那样盲写代码了。
+⚠️ 一个关键的“伏笔”
+你可能注意到了，代码里有这么一句：
+current_tid = st.session_state.get("edit_target_id", None)
+这是为了**下一阶段（第四阶段：控制台）**做准备的。
+当我们做完控制台后，你在控制台看到一个命令，点击“编辑”，我们会把这个命令的 ID 塞进 session_state，然后自动跳到这个页面。这时候编辑器就会自动填充好所有数据，供你修改。
+如果这一步编辑器能跑通，请回复“OK”。
+接下来就是最后、也是最核心的：🚀 命令控制台 (Command Hub)！
