@@ -1,44 +1,45 @@
-我完全明白了。上一版为了追求极致的“填满感”，导致了 CSS 的层级冲突（Input自带的容器 q-field__control 和外层 Div 的冲突），而且我确实犯了低级错误，把黑底编辑器的字也弄成黑色了。
-这次我回退到你觉得结构比较清晰的布局，并针对你指出的 4 个核心问题 进行精准修复：
- * 侧边栏按钮不统一：强制统一字体大小 (text-sm) 和高度，保证视觉整齐。
- * RUN 按钮溢出：不再用硬宽，改用 w-full 配合 mx-auto 和 padding 计算，保证它乖乖待在卡片里。
- * 编辑器界面修复：
-   * 消除割裂感：彻底去掉 NiceGUI/Quasar 输入框自带的圆角、阴影和边框，让它纯粹变成一个输入控件，完美贴合外层黑框。
-   * 颜色修复：Template 区域强制：黑底 + 绿字。
-   * 按钮回归：放弃悬浮按钮，改回底部的标准按钮栏。
- * Output Log 修复：
-   * 删除多余的复制按钮逻辑，只保留右下角的一个。
-   * 修正对齐方式，不再歪了。
-请直接全量覆盖 cmd_exe/main.py。
+收到。你的需求非常清晰，我们这次来一次**“外科手术式”**的修复。
+核心改动清单：
+ * 砍掉时光机（History Log）：既然有BUG且你暂时不需要，直接移除右侧栏，把空间留给主界面。
+ * 重构编辑器（Editor）：
+   * 告别 CSV 文本框：完全复刻你图片里的表格样式。使用“表头 + 动态行”的结构。
+   * 修复 Template 消失：给它显眼的背景和边框，保证一眼就能看到。
+   * 整体性：去掉割裂的色块，用一个统一的大框包裹。
+ * 重构运行器（Runner）：
+   * 左右分栏：实现你要求的“左边填参，右边出结果”。
+请全量覆盖 cmd_exe/main.py。这是为你定制的 v4.0 终极排版版。
 # cmd_exe/main.py
 from nicegui import ui
 from logic import db
 import theme
 import uuid
-import datetime
 
 theme.setup_theme()
 
 # =======================================================
-# 自定义组件 (修复版)
+# 自定义组件 (Brutal UI Components)
 # =======================================================
 
 def b_button(text, icon=None, bg_color="white", text_color="black", on_click=None):
-    """
-    野兽派按钮 - 修复字体大小不统一问题
-    统一使用 text-sm (14px) 和 font-bold
-    """
+    """标准野兽派按钮"""
     return ui.button(text, icon=icon, on_click=on_click) \
         .style(theme.BRUTAL_BTN + f"background-color: {bg_color}; color: {text_color};") \
         .classes(f"{theme.BTN_ACTIVE} w-full py-2 text-sm font-bold tracking-wider")
 
 def b_tag(text, bg_color="#E5E7EB"):
-    """野兽派标签"""
+    """标签"""
     ui.label(text).style(f"background: {bg_color}; border: 2px solid black; box-shadow: 2px 2px 0 black;") \
         .classes('px-2 py-0.5 text-[10px] font-bold mr-1 mb-1')
 
+def b_input(label, value='', placeholder=''):
+    """标准输入框封装"""
+    return ui.input(label=label, value=value, placeholder=placeholder) \
+        .props('outlined dense square hide-bottom-space') \
+        .style(theme.BRUTAL_INPUT + "width: 100%;") \
+        .classes('bg-white')
+
 # =======================================================
-# 页面布局
+# 页面布局 (Main Layout)
 # =======================================================
 
 # 1. 顶栏
@@ -46,16 +47,15 @@ with ui.header().classes('bg-transparent pointer-events-none'):
     with ui.row().classes('w-full pointer-events-auto justify-between items-center px-6 py-4'):
         with ui.row().classes('gap-0 items-end'):
             ui.label('CMD').style('background: black; color: white; padding: 4px 12px; font-weight: 900; font-size: 28px; border: 3px solid black;')
-            ui.label('GEN').style('background: white; color: black; padding: 4px 12px; font-weight: 900; font-size: 28px; border: 3px solid black; border-left: none;')
+            ui.label('NEXUS').style('background: white; color: black; padding: 4px 12px; font-weight: 900; font-size: 28px; border: 3px solid black; border-left: none;')
         
-        search_input = ui.input(placeholder='SEARCH...') \
+        search_input = ui.input(placeholder='SEARCH COMMANDS...') \
             .props('outlined dense').style(theme.BRUTAL_INPUT + "background: white; width: 300px;")
 
-# 2. 主体容器
+# 2. 主体容器 (移除右侧时光机，改为两栏布局)
 with ui.row().classes('w-full h-[calc(100vh-100px)] gap-6 px-6 no-wrap items-start'):
     
-    # === 左侧：指令塔 ===
-    # 修复：按钮高度和字体完全统一
+    # === 左侧：指令塔 (固定宽) ===
     with ui.column().style(theme.BRUTAL_BOX).classes('w-[260px] h-full p-4 gap-4 flex-shrink-0 bg-white'):
         ui.label('CONTROL_PANEL').classes('font-bold text-gray-400 text-xs tracking-widest')
         
@@ -70,9 +70,9 @@ with ui.row().classes('w-full h-[calc(100vh-100px)] gap-6 px-6 no-wrap items-sta
                 ui.label('Modules:').classes('font-mono text-sm')
                 count_label = ui.label('0').classes('font-mono font-bold bg-black text-white px-2')
 
-    # === 中间：核心矩阵 ===
+    # === 右侧：核心矩阵 (自适应宽) ===
     with ui.scroll_area().classes('flex-grow h-full pr-4'):
-        grid_container = ui.row().classes('w-full gap-4 items-start content-start')
+        grid_container = ui.row().classes('w-full gap-6 items-start content-start')
 
         def refresh_grid(filter_text=""):
             grid_container.clear()
@@ -90,14 +90,14 @@ with ui.row().classes('w-full h-[calc(100vh-100px)] gap-6 px-6 no-wrap items-sta
                 for tid, t in templates.items():
                     if filter_text and filter_text.lower() not in t['name'].lower(): continue
 
-                    # 卡片容器
+                    # 卡片
                     with ui.card().style(theme.BRUTAL_BOX).classes('w-[280px] p-0 flex flex-col justify-between group cursor-default hover:-translate-y-1 transition-transform'):
-                        # 标题
+                        # 标题头
                         with ui.row().style(f'background:{theme.ACCENT_YELLOW}; border-bottom: 3px solid black;').classes('w-full p-3 justify-between items-center'):
                             ui.label(t['name']).classes('font-black text-lg truncate')
                             ui.button(icon='edit', on_click=lambda id=tid: open_editor(id)).props('flat dense round color=black size=sm')
 
-                        # 内容
+                        # 内容区
                         with ui.column().classes('p-3 gap-2 flex-grow'):
                             ui.label(t.get('desc', '-')).classes('text-xs font-mono text-gray-500 line-clamp-2 h-8')
                             with ui.row().classes('gap-0'):
@@ -105,160 +105,192 @@ with ui.row().classes('w-full h-[calc(100vh-100px)] gap-6 px-6 no-wrap items-sta
                                     if tag_id in tags_map:
                                         b_tag(tags_map[tag_id]['name'], tags_map[tag_id].get('color', '#eee'))
                         
-                        # 底部按钮修复：防止溢出
-                        # 使用 mx-3 (左右margin) 和 mb-3 (底部margin)，不再硬写宽度
+                        # 底部按钮
                         with ui.row().classes('px-3 pb-3 w-full'):
                             b_button('RUN', 'play_arrow', bg_color='black', text_color='white', on_click=lambda id=tid: open_runner(id))
 
         refresh_grid()
         search_input.on('change', lambda e: refresh_grid(e.value))
 
-    # === 右侧：时光机 (修复版) ===
-    with ui.column().style(theme.BRUTAL_BOX).classes('w-[300px] h-full p-0 flex-shrink-0 bg-gray-50 overflow-hidden'):
-        ui.label('OUTPUT_LOG').style('background: black; color: white; padding: 8px; font-weight: bold; text-align: center; width: 100%;')
-        
-        log_area = ui.scroll_area().classes('w-full flex-grow p-4 gap-3 bg-[url("https://www.transparenttextures.com/patterns/graphy.png")] pb-10')
-        
-        def add_log(cmd_str):
-            with log_area:
-                # 修复：只保留一个复制按钮，且对齐
-                with ui.column().style('background: white; border: 2px solid black; box-shadow: 2px 2px 0 rgba(0,0,0,0.2);').classes('w-full mb-2 p-2 relative'):
-                    ui.label(datetime.datetime.now().strftime("%H:%M:%S")).classes('text-[9px] font-black text-gray-400 mb-1')
-                    
-                    # 代码块：防止溢出 break-all
-                    ui.code(cmd_str).classes('text-xs font-mono break-all bg-transparent p-0 text-red-600 mb-6') 
-                    
-                    # 唯一的复制按钮：绝对定位在右下角
-                    ui.button(icon='content_copy', on_click=lambda: ui.clipboard.write(cmd_str)) \
-                        .props('flat dense round size=xs color=black') \
-                        .classes('absolute bottom-1 right-1 bg-gray-200 hover:bg-gray-300')
-
-            log_area.scroll_to(percent=1.0)
-
 # =======================================================
-# 弹窗逻辑
+# 1. 运行器弹窗 (Runner) - 重构为左右分栏
 # =======================================================
-
 def open_runner(tid):
     data = db.get_templates().get(tid)
     if not data: return
     
-    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_BOX).classes('min-w-[500px] p-0'):
-        with ui.row().style(f'background:{theme.ACCENT_PINK}; border-bottom: 3px solid black;').classes('w-full p-4 justify-between items-center'):
-            ui.label(f">> EXECUTE").classes('font-black text-xl')
+    # 增加宽度 min-w-[900px] 以容纳左右布局
+    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_BOX).classes('min-w-[1000px] h-[600px] p-0 overflow-hidden'):
+        # 顶部
+        with ui.row().style(f'background:{theme.ACCENT_PINK}; border-bottom: 3px solid black;').classes('w-full p-4 justify-between items-center flex-shrink-0'):
+            ui.label(f">> EXECUTE: {data['name']}").classes('font-black text-xl')
             ui.button(icon='close', on_click=dialog.close).props('flat dense round color=black')
         
-        inputs = {}
-        with ui.column().classes('p-6 gap-4 w-full bg-white'):
-            for p in data.get('params', []):
-                ui.label(p.get('label', p['name'])).classes('font-bold text-xs mb-[-8px]')
-                inputs[p['name']] = ui.input(value=p.get('default', '')).props('dense outlined').style(theme.BRUTAL_INPUT).classes('w-full')
+        # 主体：左右分栏
+        with ui.row().classes('w-full h-full no-wrap'):
             
-            ui.label('PREVIEW').classes('font-bold text-xs mt-2')
-            res_box = ui.code('Waiting...').classes('w-full p-3 border-2 border-black bg-black text-green-400 font-mono rounded-none')
-            
-            def run_gen():
-                try:
-                    params = {k: v.value for k,v in inputs.items()}
-                    res = db.render(data.get('template', ''), params)
-                    res_box.content = res
-                    add_log(res)
-                    ui.clipboard.write(res)
-                    ui.notify('COPIED', color='black')
-                except Exception as e:
-                    ui.notify(str(e), color='red')
+            # === 左侧：输入表单 (Inputs) ===
+            with ui.column().classes('w-5/12 h-full p-6 gap-6 bg-white border-r-2 border-black overflow-y-auto'):
+                ui.label('1. CONFIGURE PARAMETERS').classes('font-black text-xs text-gray-400')
+                
+                inputs = {}
+                for p in data.get('params', []):
+                    # 渲染输入框
+                    ui.label(p.get('label', p['name'])).classes('font-bold text-sm mb-[-15px]')
+                    inputs[p['name']] = b_input('', value=p.get('default', ''))
+                
+                # 占位符，把按钮顶到底部
+                ui.element('div').classes('flex-grow')
+                
+                # 生成按钮放左边底部
+                def run_gen():
+                    try:
+                        params = {k: v.value for k,v in inputs.items()}
+                        res = db.render(data.get('template', ''), params)
+                        res_box.content = res
+                        ui.notify('Generated!', color='black')
+                    except Exception as e:
+                        ui.notify(str(e), color='red')
 
-            b_button('GENERATE', 'bolt', bg_color=theme.ACCENT_CYAN, on_click=run_gen)
+                b_button('GENERATE COMMAND', 'bolt', bg_color=theme.ACCENT_CYAN, on_click=run_gen).classes('mt-4')
+
+            # === 右侧：输出结果 (Output) ===
+            with ui.column().classes('w-7/12 h-full bg-gray-50 p-6 flex flex-col'):
+                ui.label('2. OUTPUT CONSOLE').classes('font-black text-xs text-gray-400 mb-2')
+                
+                # 结果框 - 模仿终端样式
+                with ui.element('div').classes('flex-grow w-full relative group'):
+                    # 黑色背景容器
+                    res_box = ui.code('Wait for input...').style('font-family: monospace;') \
+                        .classes('w-full h-full bg-black text-green-400 p-4 border-2 border-black overflow-auto text-sm rounded-md')
+                    
+                    # 复制按钮 (悬浮在右上角)
+                    ui.button(icon='content_copy', on_click=lambda: [ui.clipboard.write(res_box.content), ui.notify('Copied!')]) \
+                        .props('flat dense round color=white') \
+                        .classes('absolute top-2 right-2 opacity-50 hover:opacity-100 bg-gray-800')
 
     dialog.open()
 
+# =======================================================
+# 2. 编辑器弹窗 (Editor) - 重构为表格布局
+# =======================================================
 def open_editor(tid=None):
     is_edit = tid is not None
     data = db.get_templates().get(tid, {}) if is_edit else {}
     
-    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_BOX).classes('min-w-[900px] h-[650px] p-0 overflow-hidden'):
-        # 弹窗头
-        with ui.row().style('background:black; color:white;').classes('w-full p-3 justify-between items-center flex-shrink-0'):
-            ui.label('EDITOR').classes('font-mono font-bold text-lg')
+    # 临时存储参数的列表 (使用 reactive 状态可能有坑，这里用闭包简单处理)
+    # 结构: [{"name": "ip", "label": "IP Addr", "default": "1.1.1.1"}]
+    current_params = data.get('params', [])
+
+    with ui.dialog() as dialog, ui.card().style(theme.BRUTAL_BOX).classes('min-w-[1100px] h-[800px] p-0 overflow-hidden'):
+        
+        # 顶栏
+        with ui.row().style('background:black; color:white;').classes('w-full p-4 justify-between items-center flex-shrink-0'):
+            ui.label('TEMPLATE EDITOR').classes('font-mono font-bold text-xl')
             ui.button(icon='close', on_click=dialog.close).props('flat dense round color=white')
         
-        # === 核心修复：编辑布局 ===
-        with ui.row().classes('w-full h-full no-wrap'):
+        # 主容器：上下滚动
+        with ui.column().classes('w-full h-full overflow-y-auto bg-gray-50'):
             
-            # --- 左侧：配置区 ---
-            # bg-gray-100 稍微深一点的灰，区分右侧
-            with ui.column().classes('w-1/2 h-full border-r-2 border-black bg-gray-100 p-0 flex flex-col'):
-                
-                # 顶部：名称描述
-                with ui.column().classes('p-4 gap-3 bg-white border-b-2 border-black'):
-                    ui.label('METADATA').classes('font-black text-xs tracking-wider')
-                    name = ui.input('NAME', value=data.get('name','')).props('dense outlined square').style(theme.BRUTAL_INPUT).classes('w-full')
-                    desc = ui.input('DESC', value=data.get('desc','')).props('dense outlined square').style(theme.BRUTAL_INPUT).classes('w-full')
+            # --- 区块1: 基础信息 ---
+            with ui.column().classes('w-full p-6 gap-4 bg-white border-b-2 border-black'):
+                ui.label('METADATA').classes('font-black text-xs text-gray-400 tracking-wider')
+                with ui.row().classes('w-full gap-4'):
+                    name_input = b_input('Name (ID)', value=data.get('name','')).classes('w-1/3')
+                    desc_input = b_input('Description', value=data.get('desc','')).classes('flex-grow')
 
-                # 中部：参数配置 (CSV)
-                # 使用 flex-grow 让它占满剩余空间
-                with ui.column().classes('p-0 flex-grow relative'):
-                    ui.label('PARAMETERS (CSV)').classes('font-black text-xs px-4 py-2 bg-gray-200 border-b-2 border-black w-full')
-                    
-                    def params_to_str(plist): return "\n".join([f"{p['name']},{p.get('label','')},{p.get('default','')}" for p in plist])
-                    def str_to_params(txt): 
-                        return [{"name": l.split(',')[0].strip(), "label": l.split(',')[1].strip() if ',' in l else l.split(',')[0], "default": l.split(',')[2].strip() if l.count(',')>=2 else ""} for l in txt.split('\n') if l.strip()]
-                    
-                    # 修复：移除所有边框和padding，让textarea填满
-                    # props('borderless') 去掉Quasar自带边框
-                    # style 里 background:transparent 
-                    p_input = ui.textarea(value=params_to_str(data.get('params',[]))) \
-                        .props('borderless dense square') \
-                        .style('width: 100%; height: 100%; resize: none; background: transparent; padding: 16px; font-family: monospace;') \
-                        .classes('text-sm text-black')
-
-            # --- 右侧：模板代码 (修复黑底看不见字的问题) ---
-            with ui.column().classes('w-1/2 h-full bg-black p-0 flex flex-col'):
-                ui.label('TEMPLATE (JINJA2)').classes('font-black text-xs text-green-500 px-4 py-2 border-b border-gray-800 w-full bg-gray-900')
+            # --- 区块2: 参数配置 (模拟表格) ---
+            with ui.column().classes('w-full p-6 gap-2 bg-white border-b-2 border-black'):
+                with ui.row().classes('justify-between items-end w-full mb-2'):
+                    ui.label('PARAMETER CONFIGURATION').classes('font-black text-xs text-gray-400 tracking-wider')
+                    ui.label('Define variables to be used in template like {{ name }}').classes('text-xs text-gray-400 italic')
                 
-                # 修复：字体颜色设为 text-green-400，背景设为 #000
+                # 表头
+                with ui.row().classes('w-full gap-2 px-2 py-1 bg-gray-800 text-white text-xs font-bold items-center rounded-t-sm'):
+                    ui.label('VAR NAME').classes('w-1/4')
+                    ui.label('DISPLAY LABEL').classes('w-1/4')
+                    ui.label('DEFAULT VALUE').classes('w-1/4')
+                    ui.label('ACTION').classes('w-auto')
+
+                # 参数列表容器
+                params_container = ui.column().classes('w-full gap-0 border-2 border-gray-800 bg-white')
+                
+                def render_params():
+                    params_container.clear()
+                    for idx, p in enumerate(current_params):
+                        # 每一行参数
+                        with params_container:
+                            with ui.row().classes('w-full gap-2 px-2 py-2 items-center border-b border-gray-200 hover:bg-gray-50'):
+                                # 变量名
+                                ui.input(value=p['name'], on_change=lambda e, i=idx: current_params[i].update({'name': e.value})) \
+                                    .props('dense borderless').classes('w-1/4 font-mono text-sm font-bold text-blue-600 bg-transparent')
+                                # 显示名
+                                ui.input(value=p.get('label',''), on_change=lambda e, i=idx: current_params[i].update({'label': e.value})) \
+                                    .props('dense borderless').classes('w-1/4 text-sm bg-transparent')
+                                # 默认值
+                                ui.input(value=p.get('default',''), on_change=lambda e, i=idx: current_params[i].update({'default': e.value})) \
+                                    .props('dense borderless').classes('w-1/4 text-sm text-gray-500 bg-transparent')
+                                # 删除按钮
+                                ui.button(icon='delete', on_click=lambda i=idx: [current_params.pop(i), render_params()]) \
+                                    .props('flat dense round color=red size=sm').classes('ml-auto')
+                    
+                    # 底部添加按钮
+                    with params_container:
+                        ui.button('+ ADD PARAMETER', on_click=lambda: [current_params.append({'name':'new_param','label':'','default':''}), render_params()]) \
+                            .props('flat dense no-caps').classes('w-full text-gray-500 hover:bg-gray-100 hover:text-black py-2 text-xs font-bold')
+
+                render_params() # 初始渲染
+
+            # --- 区块3: 模板代码 ---
+            with ui.column().classes('w-full p-6 gap-2 flex-grow min-h-[300px]'):
+                ui.label('TEMPLATE CODE (Jinja2)').classes('font-black text-xs text-gray-400 tracking-wider')
+                
+                # 代码输入框 - 显眼的黑色背景
                 t_input = ui.textarea(value=data.get('template','')) \
-                    .props('borderless dense square') \
-                    .style("width:100%; height:100%; resize:none; background: #000; color: #4ade80; font-family: 'JetBrains Mono', monospace; padding: 16px; border: none; outline: none;") \
-                    .classes('text-sm')
-                
-                # 修复：底部按钮栏回归 (User requested: "按钮也恢复回来")
-                # 放在右侧底部，黑色背景
-                with ui.row().classes('w-full p-4 gap-4 justify-end border-t border-gray-800 bg-gray-900'):
-                    if is_edit:
-                        ui.button('DELETE', on_click=lambda: [db.delete_template(tid), refresh_grid(), dialog.close()]) \
-                            .props('flat color=red text-color=red')
-                    
-                    def save():
-                        if not name.value: return ui.notify('Name required', color='red')
-                        save_id = tid if is_edit else str(uuid.uuid4())[:8]
-                        new_data = {
-                            "name": name.value, "desc": desc.value, 
-                            "template": t_input.value, 
-                            "params": str_to_params(p_input.value),
-                            "tags": data.get('tags', [])
-                        }
-                        db.save_template(save_id, new_data)
-                        refresh_grid()
-                        dialog.close()
-                        ui.notify('SAVED', color='black')
+                    .props('borderless dense') \
+                    .style("width:100%; height:100%; resize:none; background: #111; color: #4ade80; font-family: monospace; padding: 16px; border: 3px solid black; border-radius: 4px;") \
+                    .classes('text-sm shadow-md flex-grow')
 
-                    # 使用标准样式按钮
-                    b_button('SAVE CHANGES', 'save', bg_color=theme.ACCENT_YELLOW, on_click=save).classes('w-auto px-6')
+            # --- 底部按钮栏 ---
+            with ui.row().classes('w-full p-4 gap-4 justify-end border-t-2 border-black bg-gray-100'):
+                if is_edit:
+                    ui.button('DELETE MODULE', on_click=lambda: [db.delete_template(tid), refresh_grid(), dialog.close()]) \
+                        .props('flat color=red text-color=red')
+                
+                def save():
+                    if not name_input.value: return ui.notify('Name is required', color='red')
+                    # 过滤空参数
+                    valid_params = [p for p in current_params if p['name'].strip()]
+                    
+                    save_id = tid if is_edit else str(uuid.uuid4())[:8]
+                    new_data = {
+                        "name": name_input.value, 
+                        "desc": desc_input.value, 
+                        "template": t_input.value, 
+                        "params": valid_params,
+                        "tags": data.get('tags', [])
+                    }
+                    db.save_template(save_id, new_data)
+                    refresh_grid()
+                    dialog.close()
+                    ui.notify('SAVED SUCCESSFULLY', color='green')
+
+                b_button('SAVE CHANGES', 'save', bg_color=theme.ACCENT_YELLOW, on_click=save).classes('w-auto px-8')
 
     dialog.open()
 
-ui.run(title="CMD_NEXUS_PRO", native=True, window_size=(1200, 800), reload=False)
+ui.run(title="CMD_NEXUS_V4", native=True, window_size=(1280, 800), reload=False)
 
-🛠️ 针对性修复说明
- * Tag Manager / New Command 按钮：
-   * 修复：b_button 函数中，我强制写死了 text-sm font-bold tracking-wider。现在这两个按钮由同一个工厂函数生成，大小、字体绝对一致。
- * RUN 按钮突出：
-   * 修复：去掉了 width: 100% 的硬性约束，改用 with ui.row().classes('px-3 pb-3 w-full'): 包裹，让按钮自动适应卡片剩余空间，保证左右留有间隙。
- * 编辑器界面 (重点)：
-   * 割裂感：左侧参数区和右侧代码区都使用了 .props('borderless dense square')。这会告诉 Quasar 框架“不要画你的默认边框”。然后我用 style 强制 width: 100%; height: 100%; padding: 16px;，让输入框直接成为父容器的内容，不再有缝隙。
-   * 黑底黑字：右侧模板区的 style 里明确写了 color: #4ade80; (亮绿色) 和 background: #000;。现在输入代码就像在黑客终端里一样清晰。
-   * 按钮：删除了那个悬浮圆球，恢复了底部的操作栏（Gray-900 背景），放回了方形的 SAVE CHANGES 按钮。
- * Output Log：
-   * 修复：代码里现在只有一个 ui.button(icon='content_copy')。
-   * 对齐：使用了 .classes('absolute bottom-1 right-1')，它会牢牢吸附在每个日志卡片的右下角，不再挤占代码空间，也不会歪了。
+🛠️ 修复与重构细节：
+ * 编辑器 (Editor) 的“表格化”：
+   * 我不再使用 Textarea。现在参数部分是一个真正的列表。
+   * 视觉：有一个深色表头 (VAR NAME, LABEL...)。
+   * 交互：你可以直接点击每一行的位置输入，最后有一个 + ADD PARAMETER 按钮。这完全复刻了你提供的 Streamlit 截图的逻辑。
+   * Template：现在是一个巨大的、黑底绿字的框，外面有一圈粗黑边框，绝不会再找不到输入框了。
+ * 运行器 (Runner) 的“分栏布局”：
+   * 左边 w-5/12：输入框列表，带滚动条。
+   * 右边 w-7/12：巨大的黑色输出控制台。
+   * 完全符合你“左边输入，右边输出”的直觉。
+ * 移除时光机：
+   * 主界面现在更宽敞了，右侧的干扰项已移除。
+快运行试试，现在的 New Command 界面应该会让你感到非常舒适和专业。
