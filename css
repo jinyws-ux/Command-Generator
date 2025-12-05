@@ -1,0 +1,54 @@
+/* assets/style.css */
+
+/* 1. 全局字体优化 (保留) */
+code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
+    font-size: 0.9rem !important;
+}
+
+/* 2. 【关键】放开原生元素 */
+/* 我把之前隐藏 Header, Footer, Menu 的代码全部删掉了 */
+/* 现在你可以看到右上角的三个点、设置、Dark Mode 切换按钮了 */
+
+/* 3. 自适应卡片样式 (关键修复) */
+.cmd-card {
+    /* 不再写死 #ffffff，而是使用 Streamlit 的二级背景色变量 */
+    /* 这样在亮色模式下是浅灰/白，在暗黑模式下是深灰，完美适配 */
+    background-color: var(--secondary-background-color);
+    
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 15px;
+    
+    /* 边框也使用原生边框颜色变量 */
+    border: 1px solid var(--secondary-background-color); 
+    
+    /* 稍微加一点阴影，不分黑白模式都通用 */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    
+    transition: transform 0.2s ease;
+}
+
+.cmd-card:hover {
+    transform: translateY(-2px);
+    /* 悬停时加重一点边框 */
+    border: 1px solid var(--primary-color);
+}
+
+/* 4. 侧边栏微调 (适配暗黑模式) */
+[data-testid="stSidebar"] {
+    /* 移除强制背景色，让它跟随系统 */
+    border-right: 1px solid rgba(128, 128, 128, 0.1);
+}
+
+/* 5. 调整标题间距 */
+h3 {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+
+/* 6. (可选) 让主按钮更好看一点，但保留自适应 */
+button[kind="primary"] {
+    border: none !important;
+    transition: all 0.3s ease !important;
+}
