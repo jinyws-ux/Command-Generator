@@ -1,177 +1,176 @@
+太棒了，地基打得非常稳！
+现在我们进入第二阶段，构建**“🏷️ 标签与分类工坊 (Tag Studio)”**。
+这是整个系统中最需要“视觉反馈”的地方。按照你的要求，我们不做枯燥的表格，而是做一个**“所见即所得”的调色盘**。
+第一步：准备工作（创建文件夹）
+我们需要在 cmd_generator 目录下确保有 views 文件夹。
+ * 如果有，直接用。
+ * 如果没有，新建一个文件夹叫 views。
+现在的结构：
+cmd_generator/
+  ├── views/          <-- 马上要在这个里面写代码
+  ├── ... (其他文件)
+
+第二步：编写“标签工坊”界面
+我们将实现以下高级功能：
+ * 灵动调色盘：选颜色时，右边实时显示标签的样子。
+ * 分类看板：按类别（Database, OS等）自动分组展示现有的 Tag。
+ * 快速管理：新建和删除都在一个页面完成。
+文件路径：views/tag_studio.py
+操作：在 views 文件夹里新建 tag_studio.py，完整复制以下代码：
+# views/tag_studio.py
 import streamlit as st
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any
-from jinja2 import Template
-import shlex
+import streamlit_antd_components as sac
+from core.tag_manager import TagManager
+import time
 
-# ==========================================
-# 第一部分：定义“命令生成器”的标准 (基类)
-# ==========================================
-class CommandStrategy(ABC):
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """下拉菜单里显示的名字"""
-        pass
+def render_tag_studio():
+    # 1. 初始化管理器
+    mgr = TagManager()
+    all_tags = mgr.get_all_tags()
+    categories = mgr.get_categories()
 
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """功能描述"""
-        pass
+    # --- 顶部：标题 ---
+    st.markdown("## 🏷️ 标签与分类工坊")
+    st.caption("Tag Studio -在这里定制你的色彩系统")
 
-    @abstractmethod
-    def get_params_schema(self) -> List[Dict[str, Any]]:
-        """定义表单长什么样"""
-        pass
+    # --- 核心区域：左右分栏 ---
+    col_create, col_preview = st.columns([1.5, 2])
 
-    @abstractmethod
-    def generate(self, params: Dict[str, Any]) -> str:
-        """核心逻辑：生成命令"""
-        pass
-
-# ==========================================
-# 第二部分：具体实现的命令 (Linux & SQL 示例)
-# ==========================================
-
-# 示例 1: Linux 查找大文件
-class FindLargeFilesCommand(CommandStrategy):
-    name = "Linux: 查找大文件"
-    description = "在指定目录下查找超过特定大小的文件，支持删除或打印。"
-
-    def get_params_schema(self):
-        return [
-            {"name": "path", "label": "搜索路径", "type": "text", "default": "/var/log", "help": "绝对路径，例如 /home/user"},
-            {"name": "size_mb", "label": "最小体积(MB)", "type": "number", "default": 100},
-            {"name": "file_type", "label": "文件后缀", "type": "text", "default": ".log", "help": "例如: .log (留空则匹配所有)"},
-            {"name": "action", "label": "执行动作", "type": "select", "options": ["只显示 (print)", "删除 (delete)", "详情 (ls -lh)"]}
-        ]
-
-    def generate(self, params):
-        # 使用 Jinja2 模板处理逻辑
-        template_str = """
-find {{ path }} -type f -size +{{ size }}M
-{%- if file_type %} -name "*{{ file_type }}" {% endif -%}
-{%- if action == '删除 (delete)' %} -delete
-{%- elif action == '详情 (ls -lh)' %} -exec ls -lh {} +
-{%- else %} -print
-{%- endif -%}
-        """
-        
-        # 安全处理路径，防止 rm -rf / 这种注入
-        safe_path = shlex.quote(params.get("path", "."))
-        
-        t = Template(template_str)
-        return t.render(
-            path=safe_path,
-            size=params.get("size_mb"),
-            file_type=params.get("file_type", "").strip(),
-            action=params.get("action")
-        ).strip().replace('\n', ' ') # 去掉换行，变成单行命令
-
-# 示例 2: Oracle 数据泵导出 (模拟 SQL/DBA 场景)
-class OracleExpdpCommand(CommandStrategy):
-    name = "Oracle: 数据泵导出 (expdp)"
-    description = "生成 Oracle expdp 数据导出命令。"
-
-    def get_params_schema(self):
-        return [
-            {"name": "user", "label": "用户名", "type": "text", "default": "system"},
-            {"name": "pwd", "label": "密码", "type": "text", "default": "oracle"},
-            {"name": "schemas", "label": "导出模式(Schema)", "type": "text", "default": "SCOTT,HR", "help": "多个用户用逗号分隔"},
-            {"name": "parallel", "label": "并行度", "type": "number", "default": 4},
-            {"name": "compression", "label": "开启压缩", "type": "checkbox", "default": True}
-        ]
-    
-    def generate(self, params):
-        template_str = """
-expdp {{ user }}/{{ pwd }} \
-schemas={{ schemas }} \
-directory=DATA_PUMP_DIR \
-dumpfile=exp_%U.dmp \
-logfile=exp.log \
-parallel={{ parallel }} \
-{%- if compression %} compression=ALL {% endif -%}
-        """
-        t = Template(template_str)
-        return t.render(
-            user=params.get("user"),
-            pwd=params.get("pwd"),
-            schemas=params.get("schemas"),
-            parallel=params.get("parallel"),
-            compression=params.get("compression")
-        ).strip()
-
-# ==========================================
-# 第三部分：主程序 UI
-# ==========================================
-def main():
-    st.set_page_config(page_title="Ops Generator", layout="wide")
-    st.title("🛠️ 运维命令生成器")
-
-    # --- 1. 注册你的命令 ---
-    # 在这里把上面的类实例化，放进列表里
-    available_commands = [
-        FindLargeFilesCommand(),
-        OracleExpdpCommand()
-    ]
-    
-    # 转换为字典方便查找: {"Linux...": instance, "Oracle...": instance}
-    cmd_map = {cmd.name: cmd for cmd in available_commands}
-
-    # --- 2. 侧边栏选择 ---
-    with st.sidebar:
-        st.header("控制台")
-        selected_name = st.selectbox("选择功能模板", options=cmd_map.keys())
-        st.markdown("---")
-        st.markdown("**提示**：\n生成后请仔细核对命令，防止误操作。")
-
-    # --- 3. 动态渲染区域 ---
-    if selected_name:
-        strategy = cmd_map[selected_name]
-        
-        st.subheader(f"📝 {selected_name}")
-        st.caption(strategy.description)
-        st.markdown("---")
-
-        # 获取该命令需要的表单结构
-        schema = strategy.get_params_schema()
-        user_inputs = {}
-
-        # 动态创建表单
-        with st.form("gen_form"):
-            col1, col2 = st.columns(2)
+    # === 左侧：创造区 (The Creator) ===
+    with col_create:
+        with st.container():
+            st.markdown("### 🎨 创建新标签")
             
-            for idx, field in enumerate(schema):
-                # 简单的交替排版
-                current_col = col1 if idx % 2 == 0 else col2
-                
-                ftype = field.get("type")
-                label = field.get("label")
-                key = field.get("name")
-                default = field.get("default")
-                help_txt = field.get("help", "")
+            # 1. 输入名字
+            new_name = st.text_input("标签名称", placeholder="例如: Nginx, Python...", key="tag_new_name")
+            
+            # 2. 选择或新建分类
+            # 这是一个高级技巧：允许选择现有，也允许直接输入新的
+            col_cat_sel, col_cat_new = st.columns([1, 1])
+            with col_cat_sel:
+                selected_cat = st.selectbox("选择现有分类", options=categories, key="tag_sel_cat")
+            with col_cat_new:
+                new_cat_input = st.text_input("或新建分类", placeholder="New Category...", key="tag_new_cat_txt")
+            
+            final_cat = new_cat_input if new_cat_input else selected_cat
 
-                if ftype == "text":
-                    user_inputs[key] = current_col.text_input(label, value=default, help=help_txt)
-                elif ftype == "number":
-                    user_inputs[key] = current_col.number_input(label, value=default or 0, step=1, help=help_txt)
-                elif ftype == "select":
-                    user_inputs[key] = current_col.selectbox(label, options=field.get("options"), help=help_txt)
-                elif ftype == "checkbox":
-                    user_inputs[key] = current_col.checkbox(label, value=default or False, help=help_txt)
+            # 3. 颜色选择器 (原生组件 + 实时反馈)
+            # 我们预设一些高级感颜色，方便用户选
+            preset_colors = ["#FF6B6B", "#4D96FF", "#6BCB77", "#F7D716", "#9D4EDD", "#FF9F43", "#2C3A47"]
+            
+            st.write("选择配色方案")
+            # 这里的 color_picker 返回的是 Hex 代码
+            picked_color = st.color_picker("自定义颜色", value="#4D96FF", key="tag_color_picker")
 
-            st.markdown("<br>", unsafe_allow_html=True)
-            submitted = st.form_submit_button("⚡ 生成命令", use_container_width=True)
+            # 4. 保存按钮
+            btn_save = st.button("✨ 保存标签", type="primary", use_container_width=True)
 
-        # --- 4. 结果输出 ---
-        if submitted:
-            try:
-                result_cmd = strategy.generate(user_inputs)
-                st.success("生成完毕")
-                st.code(result_cmd, language="bash")
-            except Exception as e:
-                st.error(f"生成出错: {e}")
+    # === 右侧：实时预览区 (The Preview) ===
+    with col_preview:
+        # 使用我们在 CSS 里定义的卡片样式
+        st.markdown('<div class="cmd-card" style="min-height: 320px;">', unsafe_allow_html=True)
+        st.markdown("#### 👁️ 实时预览 (Live Preview)")
+        
+        if new_name:
+            st.write("在命令卡片中，它看起来是这样的：")
+            # 使用 sac.tags 组件来渲染，这比 st.markdown 美观得多
+            sac.tags([
+                sac.Tag(label=f"{final_cat}: {new_name}", color=picked_color, bordered=False),
+            ], size='lg', align='center')
+            
+            st.markdown("---")
+            st.caption(f"配置详情: Name=`{new_name}` | Cat=`{final_cat}` | Color=`{picked_color}`")
+        else:
+            st.info("👈 请在左侧输入标签名称以激活预览")
+            # 展示一个灰色的示例
+            sac.tags([sac.Tag(label="Example: Tag", color="#e0e0e0")], size='lg', align='center')
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
+    # === 逻辑处理：保存 ===
+    if btn_save:
+        if not new_name:
+            st.toast("⚠️ 名字不能为空！", icon="⚠️")
+        else:
+            # 1. 如果有新分类，先存分类
+            if new_cat_input:
+                mgr.add_category(new_cat_input)
+            # 2. 存标签
+            mgr.add_tag(new_name, final_cat, picked_color)
+            st.toast(f"✅ 标签 [{new_name}] 已创建！", icon="🎉")
+            time.sleep(1) # 稍微停顿一下让用户看到提示
+            st.rerun()    # 刷新页面显示新数据
+
+    st.markdown("---")
+
+    # === 底部：现有标签看板 (Kanban View) ===
+    st.markdown("### 📚 现有标签库")
+    
+    if not all_tags:
+        st.info("暂无标签，快去上面创建一个吧！")
+    else:
+        # 这一段逻辑负责把 Tag 按分类分组
+        # 数据结构转换: {"Database": [tag1, tag2], "OS": [tag3]}
+        grouped_tags = {}
+        for tid, tdata in all_tags.items():
+            cat = tdata.get('category', 'Uncategorized')
+            if cat not in grouped_tags: grouped_tags[cat] = []
+            grouped_tags[cat].append({"id": tid, **tdata})
+
+        # 遍历显示
+        for cat, tags in grouped_tags.items():
+            with st.container():
+                st.caption(f"📂 {cat}")
+                # 将 tags 转换为 sac 组件需要的格式
+                sac_items = [
+                    sac.Tag(label=t['name'], color=t['color'], bordered=False) 
+                    for t in tags
+                ]
+                sac.tags(sac_items, size='sm', align='start')
+                st.markdown("") # 加一点空行
+
+    # === 底部：删除功能 (Delete Zone) ===
+    with st.expander("🗑️ 管理与删除模式"):
+        st.warning("注意：删除操作不可恢复")
+        # 制作一个字典供选择： {ID: "分类: 名字"}
+        delete_options = {tid: f"{t['category']}: {t['name']}" for tid, t in all_tags.items()}
+        
+        to_delete = st.multiselect(
+            "选择要删除的标签", 
+            options=delete_options.keys(),
+            format_func=lambda x: delete_options[x]
+        )
+        
+        if st.button("确认删除选中项", type="secondary"):
+            for tid in to_delete:
+                mgr.delete_tag(tid)
+            st.rerun()
+
+
+第三步：连接主程序
+现在代码写好了，但主程序 app.py 还不知道它的存在。我们需要去修改 app.py，让菜单点击“标签工坊”时，真正加载这个文件。
+文件路径：app.py
+操作：打开 app.py，找到 elif menu == '标签工坊': 这一段，替换为以下内容：
+# app.py 中需要修改的部分
+
+# ... (上面的代码保持不变) ...
+
+elif menu == '标签工坊':
+    # 引入我们刚才写的模块
+    from views.tag_studio import render_tag_studio
+    render_tag_studio()
+
+# ... (下面的代码保持不变) ...
+
+🚀 验证时刻
+现在，保存所有文件。
+回到终端，如果 streamlit 还在运行，它应该会自动检测到更改并提示 Rerun（或者你直接按 F5 刷新浏览器）。
+去点击左侧菜单的【标签工坊】。
+请尝试操作：
+ * 左侧输入：名字填 Test, 分类选 Database, 颜色选一个深紫色。
+ * 看右侧：你会发现右边的卡片里，那个 Tag 会实时变色。
+ * 点保存：左下角应该会弹出“🎉 标签已创建”。
+ * 看底部：在“现有标签库”里，你应该能看到刚才创建的 Tag 已经归类好了。
+如果这步成功了，我们就拥有了一个高颜值的配置中心。
+接下来就是最复杂的**“编辑器”和“主控制台”**了。
+这步搞定了吗？搞定请回复“OK”，我们继续攻克“编辑器”！
